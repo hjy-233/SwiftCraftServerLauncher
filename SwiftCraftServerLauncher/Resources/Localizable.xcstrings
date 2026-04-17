@@ -18139,13 +18139,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Select Language"
+            "value": "Set Language"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择语言"
+            "value": "设置语言"
           }
         }
       }

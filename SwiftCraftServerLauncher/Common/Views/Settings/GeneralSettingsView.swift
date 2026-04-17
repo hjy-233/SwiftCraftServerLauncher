@@ -14,8 +14,6 @@ public struct GeneralSettingsView: View {
   @EnvironmentObject var appUpdateService: AppUpdateService
   @State var showDirectoryPicker = false
   @State var showBackupDirectoryPicker = false
-  @State var showingRestartAlert = false
-  @State var selectedLanguage = LanguageManager.shared.selectedLanguage
   @State var error: GlobalError?
   @State var backupAlertMessage = ""
   @State var showBackupAlert = false
@@ -35,7 +33,6 @@ public struct GeneralSettingsView: View {
   /// 数据库中所有工作路径及对应游戏数量（用于快速切换）
   @State var workingPathOptions: [(path: String, count: Int)] = []
 
-  let defaultLanguage = LanguageManager.getDefaultLanguage()
   let defaultWorkingDirectory = AppPaths.launcherSupportDirectory.path
   let defaultConcurrentDownloads = 64
   let defaultEnableGitHubProxy = true
@@ -67,86 +64,57 @@ public struct GeneralSettingsView: View {
         Section(
           header: Text("settings.general.section.general.header".localized())
         ) {
-        LabeledContent("settings.language.picker".localized()) {
-          HStack(alignment: .top, spacing: 8) {
-            Picker("", selection: $selectedLanguage) {
-              ForEach(LanguageManager.shared.languages, id: \.1) { name, code in
-                Text(name).tag(code)
+          LabeledContent("settings.language.picker".localized()) {
+            Button {
+              SystemSettings.open(AppConstants.SystemSettingsDeepLinks.localizationApps)
+            } label: {
+              Text(LanguageManager.shared.selectedLanguageDisplayName)
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            }
+            .help("settings.language.picker".localized())
+          }
+          .labeledContentStyle(.custom)
+          .padding(.bottom, 4)
+
+          LabeledContent("settings.launcher_working_directory".localized()) {
+            HStack(alignment: .top, spacing: 8) {
+              VStack(alignment: .leading, spacing: 8) {
+                DirectorySettingRow(
+                  title: "settings.launcher_working_directory".localized(),
+                  path: generalSettings.launcherWorkingDirectory.isEmpty
+                    ? defaultWorkingDirectory
+                    : generalSettings.launcherWorkingDirectory,
+                  description: "settings.working_directory.description".localized(),
+                  onChoose: { showDirectoryPicker = true },
+                  onReset: { resetWorkingDirectorySafely() },
+                  showsResetButton: false
+                )
+                .fileImporter(
+                  isPresented: $showDirectoryPicker,
+                  allowedContentTypes: [.folder],
+                  allowsMultipleSelection: false
+                ) { result in
+                  handleDirectoryImport(result)
+                }
+              }
+
+              resetIconButton(
+                disabled: generalSettings.launcherWorkingDirectory == defaultWorkingDirectory
+              ) {
+                resetWorkingDirectorySafely()
               }
             }
-            .labelsHidden()
-            .fixedSize()
-
-            resetIconButton(
-              disabled: selectedLanguage == defaultLanguage
-            ) {
-              selectedLanguage = defaultLanguage
-            }
           }
-          .onChange(of: selectedLanguage) { _, newValue in
-            if newValue != LanguageManager.shared.selectedLanguage {
-              showingRestartAlert = true
-            }
-          }
-          .confirmationDialog(
-            "settings.language.restart.title".localized(),
-            isPresented: $showingRestartAlert,
-            titleVisibility: .visible
-          ) {
-            Button("settings.language.restart.confirm".localized(), role: .destructive) {
-              UserDefaults.standard.set([selectedLanguage], forKey: "AppleLanguages")
-              LanguageManager.shared.selectedLanguage = selectedLanguage
-              restartAppSafely()
-            }
-            .keyboardShortcut(.defaultAction)
-            Button("common.cancel".localized(), role: .cancel) {
-              selectedLanguage = LanguageManager.shared.selectedLanguage
-            }
-          } message: {
-            Text("settings.language.restart.message".localized())
-          }
-        }
-        .labeledContentStyle(.custom)
-        .padding(.bottom, 4)
-
-        LabeledContent("settings.launcher_working_directory".localized()) {
-          HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 8) {
-              DirectorySettingRow(
-                title: "settings.launcher_working_directory".localized(),
-                path: generalSettings.launcherWorkingDirectory.isEmpty
-                  ? defaultWorkingDirectory
-                  : generalSettings.launcherWorkingDirectory,
-                description: "settings.working_directory.description".localized(),
-                onChoose: { showDirectoryPicker = true },
-                onReset: { resetWorkingDirectorySafely() },
-                showsResetButton: false
-              )
-              .fileImporter(
-                isPresented: $showDirectoryPicker,
-                allowedContentTypes: [.folder],
-                allowsMultipleSelection: false
-              ) { result in
-                handleDirectoryImport(result)
-              }
-            }
-
-            resetIconButton(
-              disabled: generalSettings.launcherWorkingDirectory == defaultWorkingDirectory
-            ) {
-              resetWorkingDirectorySafely()
-            }
-          }
-        }
-        .labeledContentStyle(.custom(alignment: .firstTextBaseline))
-        .task {
-          workingPathOptions = await gameRepository.fetchAllWorkingPathsWithCounts()
-        }
-        .onChange(of: generalSettings.launcherWorkingDirectory) { _, _ in
-          Task {
+          .labeledContentStyle(.custom(alignment: .firstTextBaseline))
+          .task {
             workingPathOptions = await gameRepository.fetchAllWorkingPathsWithCounts()
           }
-        }
+          .onChange(of: generalSettings.launcherWorkingDirectory) { _, _ in
+            Task {
+              workingPathOptions = await gameRepository.fetchAllWorkingPathsWithCounts()
+            }
+          }
         }
 
         Section(

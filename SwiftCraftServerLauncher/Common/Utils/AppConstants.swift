@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum AppConstants {
@@ -84,12 +85,31 @@ enum AppConstants {
         static let savedGames = "savedGames"
     }
 
+    // MARK: - System Settings
+    enum SystemSettingsDeepLinks {
+        static let localizationApps = [
+            "x-apple.systempreferences:com.apple.Localization-Settings.extension?Apps",
+            "x-apple.systempreferences:com.apple.Localization-Settings.extension",
+        ]
+    }
+
     // MARK: - Database Tables
     /// 数据库表名常量
     enum DatabaseTables {
         static let gameVersions = "game_versions"
         static let modCache = "mod_cache"
         static let serverInstances = "server_instances"
+    }
+}
+
+enum SystemSettings {
+    static func open(_ deepLinks: [String]) {
+        for deepLink in deepLinks {
+            guard let url = URL(string: deepLink) else { continue }
+            if NSWorkspace.shared.open(url) {
+                return
+            }
+        }
     }
 }
 
