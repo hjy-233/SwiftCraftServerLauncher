@@ -11,6 +11,9 @@ struct SwiftCraftServerLauncherApp: App {
     @Environment(\.scenePhase)
     private var scenePhase
 
+    @Environment(\.openWindow)
+    private var openWindow
+
     // MARK: - StateObjects
     @StateObject var gameRepository = GameRepository()
     @StateObject var serverRepository = ServerRepository()
@@ -80,24 +83,49 @@ struct SwiftCraftServerLauncherApp: App {
         .windowResizability(.contentMinSize)
         .conditionalRestorationBehavior()
         .commands {
-            CommandGroup(after: .appInfo) {
+            CommandGroup(replacing: .appInfo) {
+                Button(String(format: "menu.about".localized(), Bundle.main.appName)) {
+                    WindowManager.shared.openWindow(id: .about)
+                }
+
                 Button("menu.check.updates".localized()) {
                     appUpdateService.installLatestRelease()
                 }
                 .disabled(appUpdateService.isUpdating)
                 .keyboardShortcut("u", modifiers: [.command, .shift])
             }
-            CommandGroup(after: .help) {
+            CommandGroup(replacing: .help) {
+                Button("menu.open.log".localized()) {
+                    Logger.shared.openLogFile()
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("menu.github".localized()) {
+                    NSWorkspace.shared.open(URLConfig.API.GitHub.repositoryURL())
+                }
+
+                Button("menu.report_issue".localized()) {
+                    NSWorkspace.shared.open(URLConfig.API.GitHub.issuesURL())
+                }
+
+                Button("about.contributors".localized()) {
+                    openWindow(id: WindowID.contributors.rawValue)
+                }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+
+                Button("menu.view_license".localized()) {
+                    NSWorkspace.shared.open(URLConfig.API.GitHub.licenseWebPage(ref: "dev"))
+                }
+                .keyboardShortcut("l", modifiers: [.command, .option])
+
+                Divider()
+
                 Button("menu.command.palette".localized()) {
                     commandPalette.present()
                 }
                 .keyboardShortcut("k", modifiers: [.command])
-
-                Button("menu.visit.website".localized()) {
-                    if let url = URL(string: "https://github.com/hjy666-mc/Swift-Craft-Server-Launcher") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
             }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .saveItem) {}

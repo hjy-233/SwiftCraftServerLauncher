@@ -142,9 +142,9 @@ enum URLConfig {
         enum GitHub {
             static let gitHubBase = URLConfig.url("https://github.com")
             static let baseURL = URLConfig.url("https://api.github.com")
-            static let repositoryOwner = "hjy666-mc"
-            static let assetsRepositoryName = "Swift-Craft-Server-Launcher"
-            static let repositoryName = "Swift-Craft-Server-Launcher"
+            static let repositoryOwner = "hjy-233"
+            static let assetsRepositoryName = "SwiftCraftServerLauncher"
+            static let repositoryName = "SwiftCraftServerLauncher"
             /// 公告基础地址：
             /// 例如：https://raw.githubusercontent.com/suhang12332/Swift-Craft-Launcher-Assets/refs/heads/main/news/api/announcements/0.3.1-beta/ar.json
             static let announcementBaseURL = URLConfig.url("https://raw.githubusercontent.com/\(repositoryOwner)/\(assetsRepositoryName)/refs/heads/main/news/api/announcements")
@@ -163,6 +163,15 @@ enum URLConfig {
                 )
             }
 
+            static func releases(perPage: Int = 20) -> URL {
+                let url = repositoryBaseURL
+                    .appendingPathComponent("releases")
+                    .appending(queryItems: [
+                        URLQueryItem(name: "per_page", value: "\(perPage)")
+                    ])
+                return URLConfig.applyGitProxyIfNeeded(url)
+            }
+
             static func contributors(perPage: Int = 50) -> URL {
                 let url = repositoryBaseURL
                     .appendingPathComponent("contributors")
@@ -177,6 +186,11 @@ enum URLConfig {
                 return gitHubBase
                     .appendingPathComponent(repositoryOwner)
                     .appendingPathComponent(repositoryName)
+            }
+
+            static func issuesURL() -> URL {
+                repositoryURL()
+                    .appendingPathComponent("issues")
             }
 
             // Appcast 相关

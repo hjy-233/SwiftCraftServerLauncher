@@ -16,6 +16,14 @@ public class GitHubService: ObservableObject {
         return try JSONDecoder().decode([GitHubContributor].self, from: data)
     }
 
+    /// 获取 GitHub Releases 作为版本历史数据。
+    public func fetchReleases(perPage: Int = 20) async throws -> [GitHubRelease] {
+        let url = URLConfig.API.GitHub.releases(perPage: perPage)
+        let headers = ["Accept": "application/vnd.github+json"]
+        let data = try await APIClient.get(url: url, headers: headers)
+        return try JSONDecoder().decode([GitHubRelease].self, from: data)
+    }
+
     // MARK: - Static Contributors
 
     /// 获取静态贡献者原始数据（JSON）

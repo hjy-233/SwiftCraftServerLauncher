@@ -26,6 +26,12 @@ struct WindowStyleConfig: ViewModifier {
 
                     // 统一使用标准窗口样式
                     WindowStyleHelper.configureStandardWindow(window)
+                    if windowID == .about {
+                        window.titleVisibility = .hidden
+                        window.titlebarAppearsTransparent = true
+                        window.styleMask.insert(.fullSizeContentView)
+                        window.setContentSize(NSSize(width: 720, height: 220))
+                    }
                 }
             )
     }
