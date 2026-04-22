@@ -3,11 +3,14 @@ import SwiftUI
 public struct AppearanceSettingsView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var generalSettings = GeneralSettingsManager.shared
+    @AppStorage("showServerStatusMenuBar")
+    private var showServerStatusMenuBar = true
 
     private let defaultThemeMode: ThemeMode = .system
     private let defaultEnableConsoleColoredOutput = true
     private let defaultServerFileManagerShowShortcuts = true
     private let defaultOpenServerInNewWindow = false
+    private let defaultShowServerStatusMenuBar = true
 
     public init() {}
 
@@ -169,6 +172,18 @@ public struct AppearanceSettingsView: View {
 
                             resetIconButton(disabled: generalSettings.openServerInNewWindow == defaultOpenServerInNewWindow) {
                                 generalSettings.openServerInNewWindow = defaultOpenServerInNewWindow
+                            }
+                        }
+                    }
+                    .labeledContentStyle(.custom)
+
+                    LabeledContent("settings.server.show_status_menubar".localized()) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Toggle("", isOn: $showServerStatusMenuBar)
+                                .labelsHidden()
+
+                            resetIconButton(disabled: showServerStatusMenuBar == defaultShowServerStatusMenuBar) {
+                                showServerStatusMenuBar = defaultShowServerStatusMenuBar
                             }
                         }
                     }
