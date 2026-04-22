@@ -14,6 +14,9 @@ struct SwiftCraftServerLauncherApp: App {
     @Environment(\.openWindow)
     private var openWindow
 
+    @AppStorage("showServerStatusMenuBar")
+    private var showServerStatusMenuBar = true
+
     // MARK: - StateObjects
     @StateObject var gameRepository = GameRepository()
     @StateObject var serverRepository = ServerRepository()
@@ -144,5 +147,15 @@ struct SwiftCraftServerLauncherApp: App {
         }
 
         appWindowGroups()
+
+        MenuBarExtra(
+            "menubar.servers.title".localized(),
+            systemImage: "server.rack",
+            isInserted: $showServerStatusMenuBar
+        ) {
+            ServerStatusMenuBarView()
+                .environmentObject(serverRepository)
+        }
+        .menuBarExtraStyle(.menu)
     }
 }
