@@ -130,7 +130,7 @@ extension Bundle {
         return Bundle.main.infoDictionary?["CFBundleName"] as? String ?? "SwiftCraftServerLauncher"
     }
     var copyright: String {
-        return infoDictionary?["NSHumanReadableCopyright"] as? String ?? "2026 DCStudio.No rights reserved."
+        return infoDictionary?["NSHumanReadableCopyright"] as? String ?? "Licensed under the AGPL License."
     }
 
     var identifier: String {

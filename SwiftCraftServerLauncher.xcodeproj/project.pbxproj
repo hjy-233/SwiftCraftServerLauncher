@@ -200,7 +200,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "2026 DCStudio.No rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Licensed under the AGPL License.";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14;
 				MARKETING_VERSION = 0.1.0;
@@ -263,7 +263,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "2026 DCStudio.No rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Licensed under the AGPL License.";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14;
 				MARKETING_VERSION = 0.1.0;
@@ -291,7 +291,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = SwiftCraftServerLauncher;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "2026 DCStudio.No rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Licensed under the AGPL License.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Used when voice input features are enabled.";
 				INFOPLIST_KEY_SUPublicEDKey = "VmjdQEsgCGYCb8lDZ2XbqQqJNCx6ZAdpP6QUsPiBKgQ=";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -326,7 +326,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = SwiftCraftServerLauncher;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "2026 DCStudio.No rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Licensed under the AGPL License.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Used when voice input features are enabled.";
 				INFOPLIST_KEY_SUPublicEDKey = "VmjdQEsgCGYCb8lDZ2XbqQqJNCx6ZAdpP6QUsPiBKgQ=";
 				LD_RUNPATH_SEARCH_PATHS = (

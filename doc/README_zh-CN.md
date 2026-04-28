@@ -1,146 +1,86 @@
 <div align="center">
-  <img src="../SwiftCraftServerLauncher/Assets.xcassets/AppIcon.appiconset/mac512pt2x.png" alt="SwiftCraftServerLauncher" width="128" height="128">
-  
-  # 🚀 SwiftCraftServerLauncher
-  
-  **✨ 现代化的 macOS Minecraft 启动器 ✨**
-  
-  [![SwiftCraftServerLauncher](https://img.shields.io/badge/Swift%20Craft%20Launcher-SCL-orange.svg?logo=swift)](https://github.com/suhang12332/Swift-Craft-Launcher)
-  [![Swift](https://img.shields.io/badge/Swift-5.5+-red.svg?logo=swift)](https://swift.org/)
+  <img src="../SwiftCraftServerLauncher/Assets.xcassets/AppIcon.appiconset/mac512pt2x.png" alt="SwiftCraftServerLauncher 图标" width="128" height="128">
 
-  [![QQ群](https://img.shields.io/badge/QQ%E7%BE%A4-1057517524-blue.svg?logo=tencentqq)](https://qm.qq.com/cgi-bin/qm/qr?k=1057517524)
-  [![Discord](https://img.shields.io/badge/Discord-bule.svg?logo=discord)](https://discord.gg/gYESVa3CZd)
+  <h1>SwiftCraftServerLauncher</h1>
 
-  [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg?logo=gnu)](https://www.gnu.org/licenses/agpl-3.0)
-  [![latest-release](https://img.shields.io/github/v/release/suhang12332/Swift-Craft-Launcher?label=latest-release&logo=github)](https://github.com/suhang12332/Swift-Craft-Launcher/releases/latest)
-  [![macOS](https://img.shields.io/badge/macOS-14.0+-blue.svg?logo=apple)](https://developer.apple.com/macos/)
-  [![Homebrew](https://img.shields.io/badge/Homebrew-available-green.svg?logo=homebrew)](https://formulae.brew.sh/cask/swiftcraft-launcher)
-  [![Contributors](https://img.shields.io/github/contributors/suhang12332/Swift-Craft-Launcher?color=ee8449&logo=githubsponsors)](https://github.com/suhang12332/Swift-Craft-Launcher/graphs/contributors)
-  
-  🌐 [官网](https://suhang12332.github.io/Swift-Craft-Launcher-Assets/web/) • 💾 [下载](https://github.com/suhang12332/Swift-Craft-Launcher/releases/latest) • 📚 [文档](https://suhang12332.github.io/Swift-Craft-Launcher-Assets/web/)
-  
-  [🇬🇧 English](../README.md) | **🇨🇳 简体中文** | [🇭🇰 繁體中文](README_zh-TW.md)
+  <p>一个专注于 Minecraft Java 版服务器管理的原生 macOS 应用。</p>
+
+  <p>
+    <a href="../README.md">English</a> |
+    <strong>简体中文</strong>
+  </p>
 </div>
 
----
+SwiftCraftServerLauncher 面向的是开服和日常运维场景，而不是通用游戏启动器。它的目标很直接：把建服、启停、日志查看、配置编辑，以及服务器资源管理这些高频操作收拢到一个原生 macOS 桌面应用里。
 
-## 🎯 项目概述
+## 快速开始
 
-SwiftCraftServerLauncher 是一款采用 SwiftUI 构建的原生 macOS Minecraft 启动器 🍎，提供流畅高效的游戏体验。专为现代 macOS 系统设计，集成全面的模组加载器支持、Microsoft 账户认证和直观的游戏管理功能。
+1. 从 [Releases](https://github.com/hjy-233/SwiftCraftServerLauncher/releases/latest) 下载最新版本。
+2. 打开下载好的 DMG，把 `SwiftCraftServerLauncher.app` 拖到 `Applications`。
+3. 启动应用，创建你的第一个本地服务器实例。
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/suhang12332/Swift-Craft-Launcher-Assets/refs/heads/main/imagebed/readme/screenshot2026-01-29-01.17.31.gif" alt="SwiftCraftServerLauncher 截图" width="800">
-</div>
-<div align="center">
-  <img src="https://raw.githubusercontent.com/suhang12332/Swift-Craft-Launcher-Assets/refs/heads/main/imagebed/readme/screenshot2026-01-29-01.14.06.gif" alt="SwiftCraftServerLauncher 截图" width="800">
-</div>
+## 目前支持什么
 
-## ✨ 核心特性
+- 创建和管理本地服务器实例
+- 支持 `Vanilla`、`Paper`、`Fabric`、`Forge` 和 `Custom Jar` 服务器创建流程
+- 通过 Modrinth 浏览和安装服务器资源
+- 启动和停止服务器，查看实时控制台输出与日志文件
+- 编辑运行时参数、`server.properties`、玩家列表、世界、模组和插件
+- 配置基于计划任务的自动化操作
 
-### 🧩 基础功能
-- **🔄 多版本 Minecraft 支持** - ARM: 1.13+，Intel: 未测试
-- **🔐 Microsoft 账户认证** - 安全的 OAuth 集成，支持设备代码流程
-- **🧰 模组加载器支持** - 支持 Fabric、Quilt、Forge 和 NeoForge 自动安装
-- **📦 资源管理** - 一键安装模组、数据包、光影和资源包
+## 当前限制
 
-### 💻 用户体验
-- **🎨 原生 macOS 设计** - 基于 SwiftUI，遵循 Apple 人机界面指南
-- **🌍 多语言支持** - 本地化界面，支持国旗标识
-- **🗂️ 智能路径管理** - Finder 风格的面包屑导航，自动截断长路径
-- **⚡ 性能优化** - 高效的缓存和内存管理机制
+- 当前主要支持的是本地服务器管理流程
+- 远程节点 SSH 管理仍处于实验阶段，支持还不稳定，暂时不建议作为主要使用方式
 
-### ⚙️ 高级配置
-- **☕ Java 管理** - 每个配置文件独立的 Java 路径配置，版本自动检测
-- **🧠 内存分配** - 可视化范围滑块设置 Xms/Xmx 参数
-- **🔧 自定义启动参数** - JVM 和游戏参数自定义
+## 项目定位
 
-## 📋 系统要求
+这个仓库是 Swift Craft Launcher 生态里更偏向服务器管理的一条分支。
 
-- **💻 macOS**: 14.0 或更高版本
-- **☕ Java**: 8 或更高版本（用于 Minecraft 运行时）
+- 重点是服务器管理
+- 优先保证本地节点流程可用
+- 当前资源来源以 Modrinth 为主
+- 交互体验以原生 SwiftUI macOS 应用为目标
 
-## 📥 安装方式
+## 当前状态
 
-### 🍺 使用 Homebrew Tap (推荐)
+- 持续开发中
+- 已经提供公开 release，可在 [Releases](https://github.com/hjy-233/SwiftCraftServerLauncher/releases) 页面下载
+- 源码构建仍然适合开发和测试
+
+## 运行与构建要求
+
+- macOS 14 或更高版本
+- 建议使用 Xcode 15 或更高版本进行本地构建
+
+## 从源码运行
+
+1. 克隆仓库：
+
 ```bash
-# 方法 1：一键安装
-
-brew install --cask suhang12332/swiftcraftlauncher/swift-craft-launcher
-
-# 方法 2：添加 Tap 后安装
-
-brew tap suhang12332/swiftcraftlauncher
-brew install --cask swift-craft-launcher
+git clone https://github.com/hjy-233/SwiftCraftServerLauncher.git
+cd SwiftCraftServerLauncher
 ```
 
-> **💡 提示**: 我们为 SwiftCraftServerLauncher 创建了专用的 [Homebrew Tap](https://github.com/suhang12332/homebrew-swiftcraftlauncher)
+2. 在 Xcode 中打开项目：
 
-### 💾 预编译版本
-从 [GitHub Releases](https://github.com/suhang12332/Swift-Craft-Launcher/releases/latest) 下载最新版本。
+```bash
+open SwiftCraftServerLauncher.xcodeproj
+```
 
-> **⚠️ 注意**: 当前可下载的版本均为测试版本，稳定版本即将发布。
+3. 在 Xcode 中运行 `SwiftCraftLauncher` scheme。
 
-### ❓ 常见问题
-请访问 [FAQ](FAQ.md)
+## 参与贡献
 
-### 🔨 从源码构建
-1. **📥 克隆仓库**
-  ```bash
-   git clone https://github.com/suhang12332/Swift-Craft-Launcher.git
-   cd Swift-Craft-Launcher
-  ```
+- 中文指南：[CONTRIBUTING.md](../CONTRIBUTING.md)
+- English guide: [doc/CONTRIBUTING_en.md](CONTRIBUTING_en.md)
+- Bug 反馈与需求建议：[GitHub Issues](https://github.com/hjy-233/SwiftCraftServerLauncher/issues)
 
-2. **🛠️ 在 Xcode 中打开**
-  ```bash
-   open SwiftCraftServerLauncher.xcodeproj
-  ```
+## 协议与归因
 
-3. **🚀 构建并运行** 使用 Xcode (⌘R)
+本项目采用 **GNU AGPL v3.0**，并附带额外归因条款。
 
-**构建要求：**
-- Xcode 13.0+
-- Swift 5.5+
+- 协议：[LICENSE](../LICENSE)
+- 附加条款：[ADDITIONAL_TERMS.md](ADDITIONAL_TERMS.md)
 
-## 🧪 技术架构
-
-| 组件 | 技术 |
-|------|------|
-| **🎨 UI 框架** | SwiftUI |
-| **💻 开发语言** | Swift |
-| **🔄 响应式编程** | Combine |
-| **📱 目标平台** | macOS 14.0+ |
-
-## 📜 开源协议
-
-本项目采用 GNU Affero General Public License v3.0 开源协议。详细信息请查看 [LICENSE](../LICENSE) 文件。
-
-**附加条款**：本项目包含附加条款，要求声明来源并禁止使用相同软件名称。详细信息请查看：
-- [简体中文](ADDITIONAL_TERMS.md)
-- [繁體中文](ADDITIONAL_TERMS_zh-TW.md)
-- [English](ADDITIONAL_TERMS_en.md)
-
-## 🤝 社区与支持
-
-- **👥 官方 QQ 群**: [1057517524](https://qm.qq.com/cgi-bin/qm/qr?k=1057517524)
-- **Discord**: [Discord](https://discord.gg/gYESVa3CZd)
-- **🐛 问题反馈**: [GitHub Issues](https://github.com/suhang12332/Swift-Craft-Launcher/issues)
-- **💡 功能建议**: [GitHub Discussions](https://github.com/suhang12332/Swift-Craft-Launcher/discussions)
-
-## 🌟 参与贡献
-
-我们欢迎各种形式的贡献！请查看我们的 [贡献指南](../CONTRIBUTING.md) 了解以下内容：
-- 代码风格和标准
-- Pull Request 流程
-- 问题报告指南
-
-## 🙏 致谢
-
-特别感谢以下项目对本启动器的贡献：
-
-- **[Archify](https://github.com/Oct4Pie/archify)** - macOS 应用程序通用二进制优化工具
-
----
-
-<div align="center">
-  <strong>🎮 为 Minecraft 社区用心制作 ❤️</strong>
-</div>
+本项目基于 [Swift-Craft-Launcher](https://github.com/suhang12332/Swift-Craft-Launcher) 继续演进，但仓库目标已收敛到 Minecraft 服务器管理场景。
