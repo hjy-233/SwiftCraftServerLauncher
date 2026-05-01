@@ -14,6 +14,8 @@ struct ServerConsoleView: View {
     @State private var localLogText: String = ""
     @State private var lastRemotePolledText: String = ""
     @State private var lastLocalPolledText: String = ""
+    @State private var lastLocalLogFilePath: String = ""
+    @State private var lastLocalLogOffset: UInt64 = 0
     @State private var rconPort: String = "25575"
     @State private var rconPassword: String = ""
     @State private var lastRemoteLogError: String = ""
@@ -52,6 +54,8 @@ struct ServerConsoleView: View {
             localLogText = ""
             lastRemotePolledText = ""
             lastLocalPolledText = ""
+            lastLocalLogFilePath = ""
+            lastLocalLogOffset = 0
             stopRemoteLogPolling()
             stopLocalLogPolling()
             rconPort = String(server.rconPort)
@@ -198,7 +202,7 @@ struct ServerConsoleView: View {
             Task {
                 do {
                     _ = try await Task.detached(priority: .userInitiated) {
-                        try LocalServerDirectService.sendCommand(server: server, command: text)
+                        try await LocalServerDirectService.sendCommand(server: server, command: text)
                     }.value
                 } catch {
                     await MainActor.run {
@@ -238,7 +242,7 @@ struct ServerConsoleView: View {
             Task {
                 do {
                     _ = try await Task.detached(priority: .userInitiated) {
-                        try LocalServerDirectService.sendInterrupt(server: server, force: isForce)
+                        try await LocalServerDirectService.sendInterrupt(server: server, force: isForce)
                     }.value
                     await MainActor.run {
                         ServerStatusManager.shared.setServerRunning(serverId: server.id, isRunning: false)
@@ -252,7 +256,15 @@ struct ServerConsoleView: View {
     }
 
     private var isRemoteServer: Bool {
-        server.nodeId != ServerNode.local.id || server.javaPath == "java"
+        if server.nodeId != ServerNode.local.id {
+            return true
+        }
+        if server.javaPath != "java" {
+            return false
+        }
+        let localJar = AppPaths.serverDirectory(serverName: server.directoryName)
+            .appendingPathComponent(server.serverJar)
+        return FileManager.default.fileExists(atPath: localJar.path) == false
     }
 
     private var isRconMode: Bool {
@@ -265,12 +277,7 @@ struct ServerConsoleView: View {
 
     private func currentLocalLogSnapshot(serverName: String) -> String {
         let serverDir = AppPaths.serverDirectory(serverName: serverName)
-        let candidates = [
-            serverDir.appendingPathComponent("logs/latest.log"),
-            serverDir.appendingPathComponent("latest.log"),
-            serverDir.appendingPathComponent("scsl-server.log"),
-            serverDir.appendingPathComponent("server.log"),
-        ]
+        let candidates = localLogCandidates(serverDir: serverDir)
         for file in candidates where FileManager.default.fileExists(atPath: file.path) {
             if let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty {
                 return text.components(separatedBy: .newlines).suffix(300).joined(separator: "\n")
@@ -300,9 +307,13 @@ struct ServerConsoleView: View {
 
     private func startLocalLogPollingIfNeeded() {
         guard !isRemoteServer else { return }
-        guard ServerProcessManager.shared.getProcess(for: server.id) == nil else { return }
+        guard ServerProcessManager.shared.getProcess(for: server.id) == nil else {
+            Logger.shared.debug("跳过本地日志轮询，ServerProcessManager 中存在进程: \(server.id)")
+            return
+        }
         localLogTask?.cancel()
         let serverName = server.directoryName
+        Logger.shared.debug("启动本地日志轮询: \(server.id) -> \(serverName)")
         localLogTask = Task {
             await loadLocalLog(serverName: serverName)
             while !Task.isCancelled {
@@ -320,22 +331,68 @@ struct ServerConsoleView: View {
     @MainActor
     private func loadLocalLog(serverName: String) async {
         let serverDir = AppPaths.serverDirectory(serverName: serverName)
-        let candidates = [
-            serverDir.appendingPathComponent("logs/latest.log"),
-            serverDir.appendingPathComponent("latest.log"),
-            serverDir.appendingPathComponent("scsl-server.log"),
-            serverDir.appendingPathComponent("server.log"),
-        ]
+        let candidates = localLogCandidates(serverDir: serverDir)
         for file in candidates where FileManager.default.fileExists(atPath: file.path) {
-            if let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty {
-                let current = text.components(separatedBy: .newlines).suffix(300).joined(separator: "\n")
-                let delta = incrementalDelta(previous: lastLocalPolledText, current: current)
-                if !delta.isEmpty {
-                    console.appendExternal(serverId: server.id, text: delta + "\n")
-                }
-                lastLocalPolledText = current
+            if lastLocalLogFilePath != file.path {
+                lastLocalLogFilePath = file.path
+                lastLocalLogOffset = 0
+                lastLocalPolledText = ""
+            }
+
+            guard let update = readLocalLogUpdate(from: file, offset: lastLocalLogOffset) else {
+                continue
+            }
+
+            lastLocalLogOffset = update.nextOffset
+            if update.appendedText.isEmpty {
                 return
             }
+
+            Logger.shared.debug("本地控制台读取日志增量: \(file.path)")
+            let combined = lastLocalPolledText + update.appendedText
+            let current = combined.components(separatedBy: .newlines).suffix(300).joined(separator: "\n")
+            let delta = incrementalDelta(previous: lastLocalPolledText, current: current)
+            if !delta.isEmpty {
+                console.appendExternal(serverId: server.id, text: delta + "\n")
+            }
+            lastLocalPolledText = current
+            return
+        }
+        Logger.shared.debug("本地控制台未找到可读日志文件: \(serverDir.path)")
+    }
+
+    private func localLogCandidates(serverDir: URL) -> [URL] {
+        [
+            serverDir.appendingPathComponent("scsl-server.log"),
+            serverDir.appendingPathComponent("logs/latest.log"),
+            serverDir.appendingPathComponent("latest.log"),
+            serverDir.appendingPathComponent("server.log"),
+        ]
+    }
+
+    private func readLocalLogUpdate(from file: URL, offset: UInt64) -> (appendedText: String, nextOffset: UInt64)? {
+        guard
+            let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+            let fileSizeNumber = attributes[.size] as? NSNumber
+        else {
+            return nil
+        }
+
+        let fileSize = fileSizeNumber.uint64Value
+        let safeOffset = min(offset, fileSize)
+
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        do {
+            try handle.seek(toOffset: safeOffset)
+            let data = try handle.readToEnd() ?? Data()
+            return (String(decoding: data, as: UTF8.self), fileSize)
+        } catch {
+            Logger.shared.debug("本地控制台读取日志增量失败: \(file.path) - \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -422,50 +479,17 @@ struct ServerConsoleView: View {
     }
 
     private func sendLocalRCONCommand(_ command: String) {
-        let resolvedPort: UInt16 = {
-            if let p = UInt16(rconPort.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                return p
-            }
-            if let props = try? ServerPropertiesService.readProperties(serverDir: AppPaths.serverDirectory(serverName: server.directoryName)),
-               let portText = props["rcon.port"],
-               let p = UInt16(portText.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                rconPort = String(p)
-                return p
-            }
-            return UInt16(server.rconPort)
-        }()
-        let password: String = {
-            let typed = rconPassword.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !typed.isEmpty { return typed }
-            if let props = try? ServerPropertiesService.readProperties(serverDir: AppPaths.serverDirectory(serverName: server.directoryName)),
-               let pass = props["rcon.password"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !pass.isEmpty {
-                rconPassword = pass
-                return pass
-            }
-            return server.rconPassword.trimmingCharacters(in: .whitespacesAndNewlines)
-        }()
-        guard !password.isEmpty else {
-            GlobalErrorHandler.shared.handle(
-                GlobalError.validation(
-                    chineseMessage: "当前会话未附着到原进程，且未找到 RCON 密码。请在 server.properties 中配置 rcon.password 后重试",
-                    i18nKey: "error.validation.server_not_selected",
-                    level: .notification
-                )
-            )
-            return
-        }
         Task {
             do {
-                let output = try await RCONService.execute(
-                    host: "127.0.0.1",
-                    port: resolvedPort,
-                    password: password,
-                    command: command
+                let output = try await ScslCoreCLIService.shared.run(
+                    arguments: ["server", "rcon", server.id, command]
                 )
                 await MainActor.run {
                     if !output.isEmpty {
-                        console.appendExternal(serverId: server.id, text: "[RCON] \(output)\n")
+                        console.appendExternal(
+                            serverId: server.id,
+                            text: "[RCON] \(output.trimmingCharacters(in: .whitespacesAndNewlines))\n"
+                        )
                     }
                 }
             } catch {

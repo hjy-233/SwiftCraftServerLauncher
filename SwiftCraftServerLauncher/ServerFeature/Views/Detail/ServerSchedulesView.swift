@@ -193,6 +193,7 @@ final class ServerScheduleStore: ObservableObject {
     @Published var lastRunToken = UUID()
     private var server: ServerInstance
     private var runObserver: NSObjectProtocol?
+    private var schedulesObserver: NSObjectProtocol?
 
     init(server: ServerInstance) {
         self.server = server
@@ -206,11 +207,24 @@ final class ServerScheduleStore: ObservableObject {
                 self?.lastRunToken = UUID()
             }
         }
+        schedulesObserver = NotificationCenter.default.addObserver(
+            forName: .serverSchedulesDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let serverId = notification.object as? String,
+                  serverId == self.server.id else { return }
+            self.schedules = ServerScheduleService.shared.schedules(for: self.server)
+        }
     }
 
     deinit {
         if let runObserver {
             NotificationCenter.default.removeObserver(runObserver)
+        }
+        if let schedulesObserver {
+            NotificationCenter.default.removeObserver(schedulesObserver)
         }
     }
 

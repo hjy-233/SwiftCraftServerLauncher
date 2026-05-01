@@ -30,7 +30,7 @@ final class ServerLaunchUseCase: ObservableObject {
 
         let serverDir = AppPaths.serverDirectory(serverName: server.directoryName)
         let jarPath = serverDir.appendingPathComponent(server.serverJar).path
-        try? applyLocalConsoleProperties(server: server, serverDir: serverDir)
+        try? await applyLocalConsoleProperties(server: server)
         var resolvedJavaPath = server.javaPath
         if let javaVersion = try? await ServerDownloadService.resolveJavaVersion(gameVersion: server.gameVersion) {
             let needsResolve = resolvedJavaPath.isEmpty
@@ -156,7 +156,7 @@ final class ServerLaunchUseCase: ObservableObject {
         let canDirect = LocalServerDirectService.isDirectModeAvailable(server: server)
         if hasProcess || canDirect {
             _ = try? await Task.detached(priority: .userInitiated) {
-                try LocalServerDirectService.sendCommand(server: server, command: "stop")
+                try await LocalServerDirectService.sendCommand(server: server, command: "stop")
             }.value
             // wait for graceful shutdown (up to 8s)
             for _ in 0..<16 {
@@ -189,7 +189,10 @@ final class ServerLaunchUseCase: ObservableObject {
     ) -> (String, [String]) {
         let custom = server.launchCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         if !custom.isEmpty {
-            let command = appendNoGuiIfNeeded(command: custom)
+            let command = normalizeCustomLaunchCommand(
+                appendNoGuiIfNeeded(command: custom),
+                javaPath: javaPath
+            )
             return ("/bin/zsh", ["-lc", command])
         }
 
@@ -270,7 +273,7 @@ final class ServerLaunchUseCase: ObservableObject {
         do {
             let propertiesURL = serverDir.appendingPathComponent("server.properties")
             guard FileManager.default.fileExists(atPath: propertiesURL.path) else { return }
-            let properties = try ServerPropertiesService.readProperties(serverDir: serverDir)
+            let properties = try await ServerPropertiesService.readProperties(server: server)
             let portString = properties["server-port"] ?? "25565"
             let port = Int(portString) ?? 25565
             if ServerPortChecker.isPortAvailable(port) {
@@ -403,6 +406,20 @@ final class ServerLaunchUseCase: ObservableObject {
         return result
     }
 
+    private func normalizeCustomLaunchCommand(_ command: String, javaPath: String) -> String {
+        let trimmedJavaPath = javaPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !trimmedJavaPath.isEmpty,
+            trimmedJavaPath.contains(" "),
+            command.hasPrefix(trimmedJavaPath)
+        else {
+            return command
+        }
+
+        let escapedJavaPath = trimmedJavaPath.replacingOccurrences(of: "'", with: "'\"'\"'")
+        return "'\(escapedJavaPath)'" + command.dropFirst(trimmedJavaPath.count)
+    }
+
     private func buildRemoteDefaultLaunchCommand(serverJar: String) -> String {
         """
         JAVA_BIN=""
@@ -422,13 +439,13 @@ final class ServerLaunchUseCase: ObservableObject {
         """
     }
 
-    private func applyLocalConsoleProperties(server: ServerInstance, serverDir: URL) throws {
-        var properties = try ServerPropertiesService.readProperties(serverDir: serverDir)
+    private func applyLocalConsoleProperties(server: ServerInstance) async throws {
+        var properties = try await ServerPropertiesService.readProperties(server: server)
         properties["enable-rcon"] = "false"
         properties["rcon.port"] = String(server.rconPort)
         if !server.rconPassword.isEmpty {
             properties["rcon.password"] = server.rconPassword
         }
-        try ServerPropertiesService.writeProperties(serverDir: serverDir, properties: properties)
+        try await ServerPropertiesService.writeProperties(server: server, properties: properties)
     }
 }

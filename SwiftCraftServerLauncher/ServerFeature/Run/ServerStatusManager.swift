@@ -6,7 +6,7 @@ class ServerStatusManager: ObservableObject {
 
     @Published private var serverRunningStates: [String: Bool] = [:]
     @Published private var serverLaunchingStates: [String: Bool] = [:]
-    private var serverIdToName: [String: String] = [:]
+    private var serverIdToDirectoryName: [String: String] = [:]
     private var launchStartTimes: [String: Date] = [:]
     private var statusPollTimer: Timer?
     private var pollingServerId: String?
@@ -102,7 +102,7 @@ class ServerStatusManager: ObservableObject {
             self?.serverRunningStates.removeValue(forKey: serverId)
             self?.serverLaunchingStates.removeValue(forKey: serverId)
             self?.launchStartTimes.removeValue(forKey: serverId)
-            self?.serverIdToName.removeValue(forKey: serverId)
+            self?.serverIdToDirectoryName.removeValue(forKey: serverId)
             self?.persistRunningStates()
         }
     }
@@ -113,10 +113,10 @@ class ServerStatusManager: ObservableObject {
             var changed = false
             let localIds = Set(servers.filter { $0.nodeId == ServerNode.local.id }.map(\.id))
             for server in servers where server.nodeId == ServerNode.local.id {
-                self.serverIdToName[server.id] = server.name
+                self.serverIdToDirectoryName[server.id] = server.directoryName
             }
             for server in servers where server.nodeId == ServerNode.local.id {
-                let actual = LocalServerDirectService.isDirectModeRunning(serverName: server.name)
+                let actual = LocalServerDirectService.isDirectModeRunning(serverName: server.directoryName)
                     || ServerProcessManager.shared.isServerRunning(serverId: server.id)
                 if self.serverRunningStates[server.id] != actual,
                    shouldSkipFalseUpdate(serverId: server.id, actual: actual) == false {
@@ -131,8 +131,8 @@ class ServerStatusManager: ObservableObject {
                 self.serverRunningStates[id] = false
                 changed = true
             }
-            for id in self.serverIdToName.keys where localIds.contains(id) == false {
-                self.serverIdToName.removeValue(forKey: id)
+            for id in self.serverIdToDirectoryName.keys where localIds.contains(id) == false {
+                self.serverIdToDirectoryName.removeValue(forKey: id)
             }
             if changed {
                 self.persistRunningStates()
@@ -145,10 +145,10 @@ class ServerStatusManager: ObservableObject {
     }
 
     private func isDirectModeRunning(serverId: String) -> Bool {
-        guard let name = serverIdToName[serverId] else {
+        guard let directoryName = serverIdToDirectoryName[serverId] else {
             return false
         }
-        return LocalServerDirectService.isDirectModeRunning(serverName: name)
+        return LocalServerDirectService.isDirectModeRunning(serverName: directoryName)
     }
 
     private func shouldSkipFalseUpdate(serverId: String, actual: Bool) -> Bool {

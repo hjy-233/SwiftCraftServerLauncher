@@ -1,31 +1,28 @@
 import Foundation
 
 enum ServerPropertiesService {
-    static func readProperties(serverDir: URL) throws -> [String: String] {
-        let url = serverDir.appendingPathComponent("server.properties")
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return [:]
+    static func readProperties(server: ServerInstance) async throws -> [String: String] {
+        let output = try await ScslCoreCLIService.shared.run(
+            arguments: ["server", "properties", "read", server.id]
+        )
+        let data = Data(output.utf8)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let properties = object as? [String: String] else {
+            throw ScslCoreCLIError.executionFailed("server.properties 返回格式无效")
         }
-        let content = try String(contentsOf: url, encoding: .utf8)
-        var result: [String: String] = [:]
-        for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
-            let raw = String(line)
-            if raw.trimmingCharacters(in: .whitespaces).isEmpty { continue }
-            if raw.hasPrefix("#") { continue }
-            if let idx = raw.firstIndex(of: "=") {
-                let key = String(raw[..<idx]).trimmingCharacters(in: .whitespaces)
-                let value = String(raw[raw.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
-                result[key] = value
-            }
-        }
-        return result
+        return properties
     }
 
-    static func writeProperties(serverDir: URL, properties: [String: String]) throws {
-        let url = serverDir.appendingPathComponent("server.properties")
-        let keys = properties.keys.sorted()
-        let lines = keys.map { "\($0)=\(properties[$0] ?? "")" }
-        let content = lines.joined(separator: "\n") + "\n"
-        try content.data(using: .utf8)?.write(to: url, options: .atomic)
+    static func writeProperties(
+        server: ServerInstance,
+        properties: [String: String]
+    ) async throws {
+        let data = try JSONSerialization.data(withJSONObject: properties, options: [.sortedKeys])
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw ScslCoreCLIError.invalidUTF8
+        }
+        _ = try await ScslCoreCLIService.shared.run(
+            arguments: ["server", "properties", "write", server.id, "--json", json]
+        )
     }
 }

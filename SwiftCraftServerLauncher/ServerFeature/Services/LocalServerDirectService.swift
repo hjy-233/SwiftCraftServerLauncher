@@ -50,55 +50,18 @@ enum LocalServerDirectService {
         _ = try runLocalShell(command)
     }
 
-    static func sendCommand(server: ServerInstance, command: String) throws {
-        let serverDir = AppPaths.serverDirectory(serverName: server.directoryName)
-        let fifo = serverDir.appendingPathComponent(".scsl.stdin").path
-        let escapedCommand = escapeSingleQuotes(command)
-        let shell = "test -p '\(escapeSingleQuotes(fifo))' && printf '%s\\n' '\(escapedCommand)' > '\(escapeSingleQuotes(fifo))'"
-        _ = try runLocalShell(shell)
+    static func sendCommand(server: ServerInstance, command: String) async throws {
+        _ = try await ScslCoreCLIService.shared.run(
+            arguments: ["server", "send", server.id, command]
+        )
     }
 
-    static func sendInterrupt(server: ServerInstance, force: Bool = false) throws {
-        let serverDir = AppPaths.serverDirectory(serverName: server.directoryName)
-        let escapedServerDir = escapeSingleQuotes(serverDir.path)
-        let command: String
+    static func sendInterrupt(server: ServerInstance, force: Bool = false) async throws {
+        var arguments = ["server", "interrupt", server.id]
         if force {
-            command = """
-            cd '\(escapedServerDir)' && \
-            if test -f .scsl.pid; then \
-              pid=$(cat .scsl.pid); \
-              pkill -KILL -P "$pid" 2>/dev/null || true; \
-              kill -KILL "$pid" 2>/dev/null || true; \
-              rm -f .scsl.pid .scsl.stdin; \
-              echo __SCSL_FORCE_INTERRUPTED__; \
-            else \
-              echo __SCSL_PID_MISSING__; \
-            fi
-            """
-        } else {
-            command = """
-            cd '\(escapedServerDir)' && \
-            if test -p .scsl.stdin; then printf '%s\\n' 'stop' > .scsl.stdin || true; fi && \
-            sleep 8 && \
-            if test -f .scsl.pid; then \
-              pid=$(cat .scsl.pid); \
-              if kill -0 "$pid" 2>/dev/null; then \
-                pkill -INT -P "$pid" 2>/dev/null || true; \
-                kill -INT "$pid" 2>/dev/null || true; \
-                sleep 2; \
-              fi; \
-              if kill -0 "$pid" 2>/dev/null; then \
-                pkill -TERM -P "$pid" 2>/dev/null || true; \
-                kill -TERM "$pid" 2>/dev/null || true; \
-              fi; \
-              rm -f .scsl.pid .scsl.stdin; \
-              echo __SCSL_INTERRUPTED__; \
-            else \
-              echo __SCSL_PID_MISSING__; \
-            fi
-            """
+            arguments.append("--force")
         }
-        _ = try runLocalShell(command)
+        _ = try await ScslCoreCLIService.shared.run(arguments: arguments)
     }
 
     static func isDirectModeAvailable(server: ServerInstance) -> Bool {

@@ -147,7 +147,7 @@ struct ServerPropertiesEditorView: View {
     }
 
     private func load() {
-        if server.nodeId != ServerNode.local.id || server.javaPath == "java" {
+        if isRemoteServer {
             Task {
                 guard let node = serverNodeRepository.getNode(by: server.nodeId) else { return }
                 do {
@@ -163,18 +163,22 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let dir = AppPaths.serverDirectory(serverName: server.directoryName)
-        do {
-            properties = try ServerPropertiesService.readProperties(serverDir: dir)
-            isLoaded = true
-            isDirty = false
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
+        Task {
+            do {
+                let localProps = try await ServerPropertiesService.readProperties(server: server)
+                await MainActor.run {
+                    properties = localProps
+                    isLoaded = true
+                    isDirty = false
+                }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
+            }
         }
     }
 
     func save() {
-        if server.nodeId != ServerNode.local.id || server.javaPath == "java" {
+        if isRemoteServer {
             Task {
                 guard let node = serverNodeRepository.getNode(by: server.nodeId) else { return }
                 do {
@@ -186,17 +190,18 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let dir = AppPaths.serverDirectory(serverName: server.directoryName)
-        do {
-            try ServerPropertiesService.writeProperties(serverDir: dir, properties: properties)
-            isDirty = false
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
+        Task {
+            do {
+                try await ServerPropertiesService.writeProperties(server: server, properties: properties)
+                await MainActor.run { isDirty = false }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
+            }
         }
     }
 
     private func loadFiles() {
-        if server.nodeId != ServerNode.local.id || server.javaPath == "java" {
+        if isRemoteServer {
             guard let node = serverNodeRepository.getNode(by: server.nodeId) else { return }
             Task {
                 do {
@@ -218,29 +223,17 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let root = AppPaths.serverDirectory(serverName: server.directoryName)
-        var result: [ServerFileItem] = []
-        let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        )
-        while let url = enumerator?.nextObject() as? URL {
-            let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-            let isDirectory = resourceValues?.isDirectory == true
-            if url.lastPathComponent.lowercased() == "eula.txt" {
-                continue
+        Task {
+            do {
+                let items = try await ServerFileService.listFiles(server: server)
+                await MainActor.run {
+                    fileItems = items
+                    selectDefaultFileIfNeeded()
+                }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
             }
-            let fileSize = resourceValues?.fileSize
-            result.append(ServerFileItem(
-                url: url,
-                relativePath: relativePath(for: url),
-                isDirectory: isDirectory,
-                fileSize: fileSize
-            ))
         }
-        fileItems = result.sorted { $0.relativePath < $1.relativePath }
-        selectDefaultFileIfNeeded()
     }
 
     private func selectDefaultFileIfNeeded() {
@@ -254,14 +247,6 @@ struct ServerPropertiesEditorView: View {
         }
         selectedFile = fileItems.first
         selectedNodeId = fileItems.first?.id
-    }
-
-    private func relativePath(for url: URL) -> String {
-        let root = AppPaths.serverDirectory(serverName: server.directoryName).path
-        if url.path.hasPrefix(root) {
-            return String(url.path.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        }
-        return url.path
     }
 
     private var configSidebar: some View {
@@ -471,7 +456,7 @@ struct ServerPropertiesEditorView: View {
     }
 
     private var isRemoteServer: Bool {
-        server.nodeId != ServerNode.local.id || server.javaPath == "java"
+        server.nodeId != ServerNode.local.id
     }
 
     private var currentDirectoryPath: String {
@@ -538,20 +523,15 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let root = AppPaths.serverDirectory(serverName: server.directoryName)
-        let targetDir = targetFolder.isEmpty ? root : root.appendingPathComponent(targetFolder)
-        do {
-            try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
-            for url in urls {
-                let target = targetDir.appendingPathComponent(url.lastPathComponent)
-                if FileManager.default.fileExists(atPath: target.path) {
-                    try? FileManager.default.removeItem(at: target)
+        Task {
+            do {
+                for url in urls {
+                    try await ServerFileService.importPath(server: server, sourceURL: url, targetDirectory: targetFolder)
                 }
-                try FileManager.default.copyItem(at: url, to: target)
+                await MainActor.run { loadFiles() }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
             }
-            loadFiles()
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
         }
     }
 
@@ -574,18 +554,13 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let root = AppPaths.serverDirectory(serverName: server.directoryName)
-        let sourceURL = root.appendingPathComponent(sourceRelativePath)
-        let targetURL = root.appendingPathComponent(targetPath)
-        do {
-            try FileManager.default.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if FileManager.default.fileExists(atPath: targetURL.path) {
-                try? FileManager.default.removeItem(at: targetURL)
+        Task {
+            do {
+                try await ServerFileService.movePath(server: server, from: sourceRelativePath, to: targetPath)
+                await MainActor.run { loadFiles() }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
             }
-            try FileManager.default.moveItem(at: sourceURL, to: targetURL)
-            loadFiles()
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
         }
     }
 
@@ -608,14 +583,16 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let root = AppPaths.serverDirectory(serverName: server.directoryName)
-        let url = root.appendingPathComponent(targetPath)
-        do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            finishEditing()
-            loadFiles()
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
+        Task {
+            do {
+                try await ServerFileService.createDirectory(server: server, relativePath: targetPath)
+                await MainActor.run {
+                    finishEditing()
+                    loadFiles()
+                }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
+            }
         }
     }
 
@@ -638,17 +615,16 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let root = AppPaths.serverDirectory(serverName: server.directoryName)
-        let url = root.appendingPathComponent(targetPath)
-        do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if !FileManager.default.fileExists(atPath: url.path) {
-                FileManager.default.createFile(atPath: url.path, contents: nil)
+        Task {
+            do {
+                try await ServerFileService.createFile(server: server, relativePath: targetPath)
+                await MainActor.run {
+                    finishEditing()
+                    loadFiles()
+                }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
             }
-            finishEditing()
-            loadFiles()
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
         }
     }
 
@@ -685,15 +661,16 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let root = AppPaths.serverDirectory(serverName: server.directoryName)
-        let sourceURL = root.appendingPathComponent(target.relativePath)
-        let targetURL = root.appendingPathComponent(newPath)
-        do {
-            try FileManager.default.moveItem(at: sourceURL, to: targetURL)
-            finishEditing()
-            loadFiles()
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
+        Task {
+            do {
+                try await ServerFileService.movePath(server: server, from: target.relativePath, to: newPath)
+                await MainActor.run {
+                    finishEditing()
+                    loadFiles()
+                }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
+            }
         }
     }
 
@@ -724,14 +701,16 @@ struct ServerPropertiesEditorView: View {
             }
             return
         }
-        let root = AppPaths.serverDirectory(serverName: server.directoryName)
-        let targetURL = root.appendingPathComponent(deleteTarget.relativePath)
-        do {
-            try FileManager.default.removeItem(at: targetURL)
-            self.deleteTarget = nil
-            loadFiles()
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
+        Task {
+            do {
+                try await ServerFileService.deletePath(server: server, relativePath: deleteTarget.relativePath)
+                await MainActor.run {
+                    self.deleteTarget = nil
+                    loadFiles()
+                }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
+            }
         }
     }
 

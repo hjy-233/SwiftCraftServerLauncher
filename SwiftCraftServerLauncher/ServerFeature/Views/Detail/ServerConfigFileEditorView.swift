@@ -75,7 +75,7 @@ struct RawConfigEditorView: View {
             content = ""
             return
         }
-        if server.nodeId != ServerNode.local.id || server.javaPath == "java" {
+        if server.nodeId != ServerNode.local.id {
             guard let node = serverNodeRepository.getNode(by: server.nodeId) else { return }
             Task {
                 do {
@@ -95,21 +95,26 @@ struct RawConfigEditorView: View {
             }
             return
         }
-        guard let fileURL = item.url else { return }
-        do {
-            content = try String(contentsOf: fileURL, encoding: .utf8)
-            isLoaded = true
-            isDirty = false
-        } catch {
-            let fallbackContent = try? String(contentsOf: fileURL)
-            content = fallbackContent ?? ""
-            isLoaded = true
-            isDirty = false
+        Task {
+            do {
+                let text = try await ServerFileService.readFile(server: server, relativePath: item.relativePath)
+                await MainActor.run {
+                    content = text
+                    isLoaded = true
+                    isDirty = false
+                }
+            } catch {
+                await MainActor.run {
+                    GlobalErrorHandler.shared.handle(error)
+                    isLoaded = true
+                    isDirty = false
+                }
+            }
         }
     }
 
     private func save() {
-        if server.nodeId != ServerNode.local.id || server.javaPath == "java" {
+        if server.nodeId != ServerNode.local.id {
             guard let node = serverNodeRepository.getNode(by: server.nodeId) else { return }
             Task {
                 do {
@@ -126,12 +131,13 @@ struct RawConfigEditorView: View {
             }
             return
         }
-        guard let fileURL = item.url else { return }
-        do {
-            try content.write(to: fileURL, atomically: true, encoding: .utf8)
-            isDirty = false
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
+        Task {
+            do {
+                try await ServerFileService.writeFile(server: server, relativePath: item.relativePath, content: content)
+                await MainActor.run { isDirty = false }
+            } catch {
+                await MainActor.run { GlobalErrorHandler.shared.handle(error) }
+            }
         }
     }
 

@@ -124,7 +124,8 @@ final class ServerScheduleService: ObservableObject {
     func refreshServers(_ servers: [ServerInstance]) {
         serversById = Dictionary(uniqueKeysWithValues: servers.map { ($0.id, $0) })
         for server in servers where schedulesByServerId[server.id] == nil {
-            schedulesByServerId[server.id] = loadSchedules(server: server)
+            schedulesByServerId[server.id] = []
+            loadSchedulesAsyncIfNeeded(server: server)
         }
         startTimerIfNeeded()
         refreshConsolePolling()
@@ -132,11 +133,12 @@ final class ServerScheduleService: ObservableObject {
 
     func schedules(for server: ServerInstance) -> [ServerSchedule] {
         if let existing = schedulesByServerId[server.id] {
+            loadSchedulesAsyncIfNeeded(server: server)
             return existing
         }
-        let loaded = loadSchedules(server: server)
-        schedulesByServerId[server.id] = loaded
-        return loaded
+        schedulesByServerId[server.id] = []
+        loadSchedulesAsyncIfNeeded(server: server)
+        return []
     }
 
     func updateSchedules(for server: ServerInstance, schedules: [ServerSchedule]) {
@@ -146,9 +148,13 @@ final class ServerScheduleService: ObservableObject {
         startTimerIfNeeded()
         tick()
         refreshConsolePolling()
+        NotificationCenter.default.post(name: .serverSchedulesDidChange, object: server.id)
     }
 
     func loadSchedules(server: ServerInstance) -> [ServerSchedule] {
+        if server.nodeId == ServerNode.local.id {
+            return schedulesByServerId[server.id] ?? []
+        }
         let url = scheduleFileURL(for: server)
         guard let data = try? Data(contentsOf: url) else {
             return []
@@ -157,6 +163,16 @@ final class ServerScheduleService: ObservableObject {
     }
 
     private func saveSchedules(server: ServerInstance, schedules: [ServerSchedule]) {
+        if server.nodeId == ServerNode.local.id {
+            Task {
+                do {
+                    try await ServerScheduleCoreService.writeSchedules(server: server, schedules: schedules)
+                } catch {
+                    await MainActor.run { GlobalErrorHandler.shared.handle(error) }
+                }
+            }
+            return
+        }
         let url = scheduleFileURL(for: server)
         let dir = url.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -174,6 +190,31 @@ final class ServerScheduleService: ObservableObject {
         }
         return base.appendingPathComponent(".scsl", isDirectory: true)
             .appendingPathComponent("schedules.json")
+    }
+
+    private func loadSchedulesAsyncIfNeeded(server: ServerInstance) {
+        if server.nodeId != ServerNode.local.id {
+            let loaded = loadSchedules(server: server)
+            if schedulesByServerId[server.id] != loaded {
+                schedulesByServerId[server.id] = loaded
+                NotificationCenter.default.post(name: .serverSchedulesDidChange, object: server.id)
+            }
+            return
+        }
+
+        Task {
+            do {
+                let loaded = try await ServerScheduleCoreService.readSchedules(server: server)
+                guard serversById[server.id] != nil else { return }
+                if schedulesByServerId[server.id] != loaded {
+                    schedulesByServerId[server.id] = loaded
+                    NotificationCenter.default.post(name: .serverSchedulesDidChange, object: server.id)
+                    refreshConsolePolling()
+                }
+            } catch {
+                GlobalErrorHandler.shared.handle(error)
+            }
+        }
     }
 
     private func startTimerIfNeeded() {
@@ -523,6 +564,14 @@ final class ServerScheduleService: ObservableObject {
         context: TriggerContext? = nil
     ) async {
         Logger.shared.info("定时任务触发(\(reason)): \(server.name) / \(schedule.name) / \(schedule.action.rawValue)")
+        if server.nodeId == ServerNode.local.id {
+            let didRun = await executeLocalScheduleWithCLI(schedule: schedule, server: server, context: context)
+            guard didRun else { return }
+            lastRunAt[schedule.id] = Date()
+            NotificationCenter.default.post(name: .serverScheduleDidRun, object: schedule.id)
+            return
+        }
+
         let useCase = ServerLaunchUseCase()
         switch schedule.action {
         case .start:
@@ -555,7 +604,7 @@ final class ServerScheduleService: ObservableObject {
             do {
                 if server.nodeId == ServerNode.local.id {
                     _ = try await Task.detached(priority: .userInitiated) {
-                        try LocalServerDirectService.sendCommand(server: server, command: command)
+                        try await LocalServerDirectService.sendCommand(server: server, command: command)
                     }.value
                 } else if let node = nodeRepository?.getNode(by: server.nodeId) {
                     try await SSHNodeService.sendRemoteDirectCommand(
@@ -573,6 +622,60 @@ final class ServerScheduleService: ObservableObject {
         NotificationCenter.default.post(name: .serverScheduleDidRun, object: schedule.id)
     }
 
+    private func executeLocalScheduleWithCLI(
+        schedule: ServerSchedule,
+        server: ServerInstance,
+        context: TriggerContext?
+    ) async -> Bool {
+        do {
+            switch schedule.action {
+            case .start:
+                _ = try await ScslCoreCLIService.shared.run(arguments: ["server", "start", server.id])
+                return true
+            case .stop:
+                _ = try await ScslCoreCLIService.shared.run(arguments: ["server", "stop", server.id])
+                return true
+            case .restart:
+                _ = try await ScslCoreCLIService.shared.run(arguments: ["server", "restart", server.id])
+                return true
+            case .command:
+                let command = buildScheduledCommand(schedule: schedule, context: context)
+                guard !command.isEmpty else { return false }
+                _ = try await ScslCoreCLIService.shared.run(arguments: ["server", "send", server.id, command])
+                return true
+            }
+        } catch {
+            Logger.shared.error("本地定时任务执行失败: \(error.localizedDescription)")
+            GlobalErrorHandler.shared.handle(error)
+            return false
+        }
+    }
+
+    private func buildScheduledCommand(
+        schedule: ServerSchedule,
+        context: TriggerContext?
+    ) -> String {
+        var command = schedule.command
+        if schedule.trigger == .consoleKeyword, let context {
+            command = substituteRegexTokens(
+                in: command,
+                line: context.line,
+                rawLine: context.rawLine,
+                match: context.match,
+                ignoreCase: schedule.keywordIgnoreCase
+            )
+            lastConsoleEcho[schedule.id] = (command: command, time: Date())
+            lastConsoleTrigger[schedule.id] = (line: context.line, command: command, time: Date())
+        }
+        command = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return "" }
+        if let guardInfo = lastConsoleTrigger[schedule.id],
+           Date().timeIntervalSince(guardInfo.time) < 1.0 {
+            return ""
+        }
+        return command
+    }
+
     func lastRunDate(for schedule: ServerSchedule) -> Date? {
         lastRunAt[schedule.id]
     }
@@ -580,6 +683,7 @@ final class ServerScheduleService: ObservableObject {
 
 extension Notification.Name {
     static let serverScheduleDidRun = Notification.Name("scsl.server.schedule.didRun")
+    static let serverSchedulesDidChange = Notification.Name("scsl.server.schedules.didChange")
 }
 
 private func sanitizeConsoleLine(_ line: String) -> String {

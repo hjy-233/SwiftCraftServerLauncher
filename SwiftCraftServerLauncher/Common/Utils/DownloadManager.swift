@@ -51,41 +51,36 @@ enum DownloadManager {
                 level: .notification
             )
         }
-
-        let resourceDir: URL? = {
-            switch type {
-            case .mod:
-                return AppPaths.modsDirectory(gameName: game.gameName)
-            case .datapack:
-                // 优化：缓存小写路径组件，避免重复创建
-                let lowercasedPath = url.lastPathComponent.lowercased()
-                if lowercasedPath.hasSuffix(".\(AppConstants.FileExtensions.jar)") {
-                    return AppPaths.modsDirectory(gameName: game.gameName)
-                }
-                return AppPaths.datapacksDirectory(gameName: game.gameName)
-            case .shader:
-                return AppPaths.shaderpacksDirectory(gameName: game.gameName)
-            case .resourcepack:
-                // 优化：缓存小写路径组件，避免重复创建
-                let lowercasedPath = url.lastPathComponent.lowercased()
-                if lowercasedPath.hasSuffix(".\(AppConstants.FileExtensions.jar)") {
-                    return AppPaths.modsDirectory(gameName: game.gameName)
-                }
-                return AppPaths.resourcepacksDirectory(gameName: game.gameName)
-            }
-        }()
-
-        guard let resourceDirUnwrapped = resourceDir else {
-            throw GlobalError.resource(
-                chineseMessage: "无法获取资源目录",
-                i18nKey: "error.resource.directory_not_found",
+        let fileName = url.lastPathComponent
+        guard !fileName.isEmpty else {
+            throw GlobalError.validation(
+                chineseMessage: "下载地址缺少文件名",
+                i18nKey: "error.validation.invalid_download_url",
                 level: .notification
             )
         }
 
-        let destURL = resourceDirUnwrapped.appendingPathComponent(url.lastPathComponent)
-        // 优化：直接传递已创建的 URL，避免在 downloadFile 中重复创建
-        return try await downloadFile(url: url, destinationURL: destURL, expectedSha1: expectedSha1)
+        var arguments = [
+            "resource", "download",
+            "--game-name", game.gameName,
+            "--resource-type", type.rawValue,
+            "--url", urlString,
+            "--file-name", fileName,
+        ]
+        if let expectedSha1, !expectedSha1.isEmpty {
+            arguments.append(contentsOf: ["--sha1", expectedSha1])
+        }
+
+        let output = try await ScslCoreCLIService.shared.run(arguments: arguments)
+        let resolvedPath = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !resolvedPath.isEmpty else {
+            throw GlobalError.resource(
+                chineseMessage: "core 未返回下载后的资源路径",
+                i18nKey: "error.resource.directory_not_found",
+                level: .notification
+            )
+        }
+        return URL(fileURLWithPath: resolvedPath)
     }
 
     // 常量字符串，避免重复创建
