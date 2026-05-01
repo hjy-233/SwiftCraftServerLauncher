@@ -1,0 +1,16 @@
+[package]
+name = "scsl_core_swiftdata"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "scsl_core_swiftdata"
+path = "src/lib.rs"
+
+[dependencies]
+rusqlite = "0.32.1"
+scsl_core_domain = { path = "../scsl_core_domain" }
+scsl_core_ports = { path = "../scsl_core_ports" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"

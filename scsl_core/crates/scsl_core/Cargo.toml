@@ -1,0 +1,22 @@
+[package]
+name = "scsl_core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "scsl_core"
+path = "src/lib.rs"
+
+[dependencies]
+scsl_core_download = { path = "../scsl_core_download" }
+scsl_core_domain = { path = "../scsl_core_domain" }
+scsl_core_forge = { path = "../scsl_core_forge" }
+scsl_core_inmemory = { path = "../scsl_core_inmemory" }
+scsl_core_inventory = { path = "../scsl_core_inventory" }
+scsl_core_launch = { path = "../scsl_core_launch" }
+scsl_core_local = { path = "../scsl_core_local" }
+scsl_core_mirror = { path = "../scsl_core_mirror" }
+scsl_core_ports = { path = "../scsl_core_ports" }
+scsl_core_service = { path = "../scsl_core_service" }
+scsl_core_swiftdata = { path = "../scsl_core_swiftdata" }

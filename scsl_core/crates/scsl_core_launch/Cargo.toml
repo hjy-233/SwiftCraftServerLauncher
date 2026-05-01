@@ -1,0 +1,12 @@
+[package]
+name = "scsl_core_launch"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "scsl_core_launch"
+path = "src/lib.rs"
+
+[dependencies]
+scsl_core_domain = { path = "../scsl_core_domain" }

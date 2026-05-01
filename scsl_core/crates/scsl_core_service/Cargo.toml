@@ -1,0 +1,16 @@
+[package]
+name = "scsl_core_service"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "scsl_core_service"
+path = "src/lib.rs"
+
+[dependencies]
+scsl_core_domain = { path = "../scsl_core_domain" }
+scsl_core_ports = { path = "../scsl_core_ports" }
+
+[dev-dependencies]
+scsl_core_inmemory = { path = "../scsl_core_inmemory" }
