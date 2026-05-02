@@ -27,12 +27,10 @@ enum NeoForgeLoaderService {
             return cached
         }
 
-        // 2. 直接下载指定版本的 version.json
-        // 使用统一的 API 客户端
-        let url = URLConfig.API.Modrinth.loaderProfile(loader: "neo", version: loaderVersion)
-        let data = try await APIClient.get(url: url)
-
-        var result = try JSONDecoder().decode(ModrinthLoader.self, from: data)
+        let response: ScslCoreCLIEnvelope<ModrinthLoader> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["modrinth", "loader-profile", "--loader", "neo", "--version", loaderVersion]
+        )
+        var result = response.data
         result = CommonService.processGameVersionPlaceholders(loader: result, gameVersion: minecraftVersion)
         // 3. 存入缓存
         result.version = loaderVersion

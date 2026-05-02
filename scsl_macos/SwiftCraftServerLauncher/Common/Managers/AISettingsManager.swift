@@ -71,8 +71,16 @@ enum APIFormat {
 class AISettingsManager: ObservableObject {
     static let shared = AISettingsManager()
 
-    @AppStorage("aiProvider")
+    private struct CoreBackedAISettings: Codable {
+        let selectedProvider: String?
+        let ollamaBaseURL: String?
+        let openAIBaseURL: String?
+        let modelOverride: String?
+        let aiAvatarURL: String?
+    }
+
     private var _selectedProviderRawValue: String = "openai"
+    private var isApplyingCoreSettings = false
 
     var selectedProvider: AIProvider {
         get {
@@ -80,6 +88,7 @@ class AISettingsManager: ObservableObject {
         }
         set {
             _selectedProviderRawValue = newValue.rawValue
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
@@ -119,34 +128,35 @@ class AISettingsManager: ObservableObject {
                     _ = KeychainManager.save(data: data, account: aiSettingsAccount, key: aiApiKeyKeychainKey)
                 }
             }
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
 
-    @AppStorage("aiOllamaBaseURL")
     var ollamaBaseURL: String = "http://localhost:11434" {
         didSet {
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
 
-    @AppStorage("aiOpenAIBaseURL")
     var openAIBaseURL: String = "" {
         didSet {
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
 
-    @AppStorage("aiModelOverride")
     var modelOverride: String = "" {
         didSet {
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
 
-    @AppStorage("aiAvatarURL")
     var aiAvatarURL: String = "https://mcskins.top/assets/snippets/download/skin.php?n=7050" {
         didSet {
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
@@ -172,5 +182,53 @@ class AISettingsManager: ObservableObject {
 
     private init() {
         _ = apiKey
+        loadCoreSettings()
+        persistCoreSettingsIfNeeded()
+    }
+
+    private func loadCoreSettings() {
+        do {
+            let settings = try CoreSettingsBridge.read(
+                CoreBackedAISettings.self,
+                scope: .ai
+            )
+            isApplyingCoreSettings = true
+            defer { isApplyingCoreSettings = false }
+            if let selectedProvider = settings.selectedProvider {
+                _selectedProviderRawValue = selectedProvider
+            }
+            if let ollamaBaseURL = settings.ollamaBaseURL {
+                self.ollamaBaseURL = ollamaBaseURL
+            }
+            if let openAIBaseURL = settings.openAIBaseURL {
+                self.openAIBaseURL = openAIBaseURL
+            }
+            if let modelOverride = settings.modelOverride {
+                self.modelOverride = modelOverride
+            }
+            if let aiAvatarURL = settings.aiAvatarURL {
+                self.aiAvatarURL = aiAvatarURL
+            }
+        } catch {
+            Logger.shared.warning("读取 core ai settings 失败: \(error.localizedDescription)")
+        }
+    }
+
+    private func persistCoreSettingsIfNeeded() {
+        guard !isApplyingCoreSettings else { return }
+        do {
+            try CoreSettingsBridge.write(
+                CoreBackedAISettings(
+                    selectedProvider: _selectedProviderRawValue,
+                    ollamaBaseURL: ollamaBaseURL,
+                    openAIBaseURL: openAIBaseURL,
+                    modelOverride: modelOverride,
+                    aiAvatarURL: aiAvatarURL
+                ),
+                scope: .ai
+            )
+        } catch {
+            Logger.shared.warning("写入 core ai settings 失败: \(error.localizedDescription)")
+        }
     }
 }

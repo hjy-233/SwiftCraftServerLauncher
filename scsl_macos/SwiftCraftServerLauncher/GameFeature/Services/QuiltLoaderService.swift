@@ -18,12 +18,13 @@ enum QuiltLoaderService {
 
     /// 获取所有可用 Quilt Loader 版本
     static func fetchAllQuiltLoadersThrowing(for minecraftVersion: String) async throws -> [QuiltLoaderResponse] {
-        let url = URLConfig.API.Quilt.loaderBase.appendingPathComponent(minecraftVersion)
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: url)
-        let decoder = JSONDecoder()
-        let allLoaders = try decoder.decode([QuiltLoaderResponse].self, from: data)
-        return allLoaders.filter { !$0.loader.version.lowercased().contains("beta") && !$0.loader.version.lowercased().contains("pre") }
+        let result = try await CommonService.fetchAllLoaderVersionsThrowing(
+            type: "quilt",
+            minecraftVersion: minecraftVersion
+        )
+        return result.loaders.map { loader in
+            QuiltLoaderResponse(loader: .init(version: loader.id))
+        }
     }
 
     /// 获取指定版本的 Quilt Loader
@@ -40,12 +41,10 @@ enum QuiltLoaderService {
             return cached
         }
 
-        // 2. 直接下载指定版本的 version.json
-        // 使用统一的 API 客户端
-        let url = URLConfig.API.Modrinth.loaderProfile(loader: "quilt", version: loaderVersion)
-        let data = try await APIClient.get(url: url)
-
-        var result = try JSONDecoder().decode(ModrinthLoader.self, from: data)
+        let response: ScslCoreCLIEnvelope<ModrinthLoader> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["modrinth", "loader-profile", "--loader", "quilt", "--version", loaderVersion]
+        )
+        var result = response.data
         result.version = loaderVersion
         result = CommonService.processGameVersionPlaceholders(loader: result, gameVersion: minecraftVersion)
         // 3. 存入缓存

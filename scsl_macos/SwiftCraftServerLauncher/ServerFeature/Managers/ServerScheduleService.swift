@@ -571,55 +571,7 @@ final class ServerScheduleService: ObservableObject {
             NotificationCenter.default.post(name: .serverScheduleDidRun, object: schedule.id)
             return
         }
-
-        let useCase = ServerLaunchUseCase()
-        switch schedule.action {
-        case .start:
-            await useCase.launchServer(server: server)
-        case .stop:
-            await useCase.stopServer(server: server)
-        case .restart:
-            await useCase.stopServer(server: server)
-            await useCase.launchServer(server: server)
-        case .command:
-            var command = schedule.command
-            if schedule.trigger == .consoleKeyword, let context {
-                command = substituteRegexTokens(
-                    in: command,
-                    line: context.line,
-                    rawLine: context.rawLine,
-                    match: context.match,
-                    ignoreCase: schedule.keywordIgnoreCase
-                )
-                lastConsoleEcho[schedule.id] = (command: command, time: Date())
-                lastConsoleTrigger[schedule.id] = (line: context.line, command: command, time: Date())
-            }
-            command = command.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !command.isEmpty else { return }
-            if let guardInfo = lastConsoleTrigger[schedule.id] {
-                if Date().timeIntervalSince(guardInfo.time) < 1.0 {
-                    return
-                }
-            }
-            do {
-                if server.nodeId == ServerNode.local.id {
-                    _ = try await Task.detached(priority: .userInitiated) {
-                        try await LocalServerDirectService.sendCommand(server: server, command: command)
-                    }.value
-                } else if let node = nodeRepository?.getNode(by: server.nodeId) {
-                    try await SSHNodeService.sendRemoteDirectCommand(
-                        node: node,
-                        serverName: server.name,
-                        command: command
-                    )
-                }
-            } catch {
-                Logger.shared.error("定时任务命令执行失败: \(error.localizedDescription)")
-                GlobalErrorHandler.shared.handle(error)
-            }
-        }
-        lastRunAt[schedule.id] = Date()
-        NotificationCenter.default.post(name: .serverScheduleDidRun, object: schedule.id)
+        Logger.shared.warning("已跳过远程节点定时任务，远程节点功能已停用: \(server.name)")
     }
 
     private func executeLocalScheduleWithCLI(

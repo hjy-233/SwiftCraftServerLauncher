@@ -8,22 +8,29 @@ import SwiftUI
 final class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
 
-    @AppStorage("themeMode")
+    private struct CoreBackedThemeSettings: Codable {
+        let themeMode: String?
+    }
+
     var themeMode: ThemeMode = .system {
         didSet {
             applyAppAppearance()
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
 
     private var appearanceObserver: NSKeyValueObservation?
     private var debounceWorkItem: DispatchWorkItem?
+    private var isApplyingCoreSettings = false
 
     private init() {
+        loadCoreSettings()
         DispatchQueue.main.async { [weak self] in
             self?.applyAppAppearance()
             self?.setupAppearanceObserver()
         }
+        persistCoreSettingsIfNeeded()
     }
 
     deinit {
@@ -67,6 +74,35 @@ final class ThemeManager: ObservableObject {
             DispatchQueue.main.async {
                 NSApp.appearance = appearance
             }
+        }
+    }
+
+    private func loadCoreSettings() {
+        do {
+            let settings = try CoreSettingsBridge.read(
+                CoreBackedThemeSettings.self,
+                scope: .theme
+            )
+            if let themeMode = settings.themeMode,
+               let resolved = ThemeMode(rawValue: themeMode) {
+                isApplyingCoreSettings = true
+                self.themeMode = resolved
+                isApplyingCoreSettings = false
+            }
+        } catch {
+            Logger.shared.warning("读取 core theme settings 失败: \(error.localizedDescription)")
+        }
+    }
+
+    private func persistCoreSettingsIfNeeded() {
+        guard !isApplyingCoreSettings else { return }
+        do {
+            try CoreSettingsBridge.write(
+                CoreBackedThemeSettings(themeMode: themeMode.rawValue),
+                scope: .theme
+            )
+        } catch {
+            Logger.shared.warning("写入 core theme settings 失败: \(error.localizedDescription)")
         }
     }
 }

@@ -210,21 +210,15 @@ extension ServerCreationViewModel {
                 versions = []
             }
         } else {
-        switch type {
-        case .fabric:
-            let fabricVersions = await FabricLoaderService.fetchAllLoaderVersions(for: gameVersion)
-            versions = fabricVersions.map { $0.loader.version }
-        case .forge:
             do {
-                let forgeVersions = try await ForgeLoaderService.fetchAllForgeVersions(for: gameVersion)
-                versions = forgeVersions.loaders.map { $0.id }
+                versions = try await ServerDownloadService.fetchAvailableLoaderVersions(
+                    serverType: type,
+                    gameVersion: gameVersion
+                )
             } catch {
-                Logger.shared.error("获取 Forge 版本失败: \(error.localizedDescription)")
+                Logger.shared.error("获取加载器版本失败: \(error.localizedDescription)")
                 versions = []
             }
-        default:
-            versions = []
-        }
         }
 
         availableLoaderVersions = versions

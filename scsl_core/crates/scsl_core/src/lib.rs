@@ -14,7 +14,7 @@ pub use scsl_core_forge::{
 pub use scsl_core_inmemory::{InMemoryRuntime, InMemoryStore, sample_local_server};
 pub use scsl_core_inventory::{ServerInventory, ServerInventoryAnalyzer};
 pub use scsl_core_launch::{ServerLaunchKind, ServerLaunchPlan, ServerLaunchPlanner};
-pub use scsl_core_local::{LocalServerFileEntry, LocalServerRuntime};
+pub use scsl_core_local::{LocalLogPollResult, LocalServerFileEntry, LocalServerRuntime};
 pub use scsl_core_mirror::{
     FASTMIRROR_DEFAULT_BASE_URL, FastMirrorCoreDetail, FastMirrorCoreSummary,
     POLARS_DEFAULT_BASE_URL, PolarsCoreItem, PolarsCoreType, ServerMirrorSource, custom_mirror_url,

@@ -24,7 +24,6 @@ private extension JSONDecoder {
 }
 
 enum ModrinthService {
-
     static func fetchVersionInfo(from version: String) async throws -> MinecraftVersionManifest {
         let cacheKey = "version_info_\(version)"
 
@@ -72,27 +71,10 @@ enum ModrinthService {
     }
 
     static func fetchVersionInfoThrowing(from version: String) async throws -> MinecraftVersionManifest {
-        let url = URLConfig.API.Modrinth.versionInfo(version: version)
-
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: url)
-
-        do {
-            let decoder = JSONDecoder()
-            decoder.configureForModrinth()
-            let versionInfo = try decoder.decode(MinecraftVersionManifest.self, from: data)
-            return versionInfo
-        } catch {
-            if error is GlobalError {
-                throw error
-            } else {
-                throw GlobalError.validation(
-                    chineseMessage: "解析版本信息失败",
-                    i18nKey: "error.validation.version_info_parse_failed",
-                    level: .notification
-                )
-            }
-        }
+        let response: ScslCoreCLIEnvelope<MinecraftVersionManifest> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["modrinth", "version-info", version]
+        )
+        return response.data
     }
 
     static func searchProjects(
@@ -124,31 +106,20 @@ enum ModrinthService {
         limit: Int,
         query: String?
     ) async throws -> ModrinthResult {
-        guard var components = URLComponents(
-            url: URLConfig.API.Modrinth.search,
-            resolvingAgainstBaseURL: true
-        ) else {
-            throw GlobalError.validation(
-                chineseMessage: "构建URLComponents失败",
-                i18nKey: "error.validation.url_components_build_failed",
-                level: .notification
-            )
-        }
-        var queryItems = [
-            URLQueryItem(name: "index", value: index),
-            URLQueryItem(name: "offset", value: String(offset)),
-            URLQueryItem(name: "limit", value: String(min(limit, 100))),
+        var arguments = [
+            "modrinth", "search",
+            "--index", index,
+            "--offset", String(offset),
+            "--limit", String(min(limit, 100)),
         ]
-        if let query = query {
-            queryItems.append(URLQueryItem(name: "query", value: query))
+        if let query, !query.isEmpty {
+            arguments.append(contentsOf: ["--query", query])
         }
         if let facets = facets {
             do {
                 let facetsJson = try JSONEncoder().encode(facets)
                 if let facetsString = String(data: facetsJson, encoding: .utf8) {
-                    queryItems.append(
-                        URLQueryItem(name: "facets", value: facetsString)
-                    )
+                    arguments.append(contentsOf: ["--facets-json", facetsString])
                 }
             } catch {
                 throw GlobalError.validation(
@@ -158,22 +129,8 @@ enum ModrinthService {
                 )
             }
         }
-        components.queryItems = queryItems
-        guard let url = components.url else {
-            throw GlobalError.validation(
-                chineseMessage: "构建搜索URL失败",
-                i18nKey: "error.validation.search_url_build_failed",
-                level: .notification
-            )
-        }
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: url)
-
-        let decoder = JSONDecoder()
-        decoder.configureForModrinth()
-        let result = try decoder.decode(ModrinthResult.self, from: data)
-
-        return result
+        let response: ScslCoreCLIEnvelope<ModrinthResult> = try await ScslCoreCLIService.shared.runJSON(arguments: arguments)
+        return response.data
     }
 
     static func fetchLoaders() async -> [Loader] {
@@ -188,10 +145,8 @@ enum ModrinthService {
     }
 
     static func fetchLoadersThrowing() async throws -> [Loader] {
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: URLConfig.API.Modrinth.loaderTag)
-        let result = try JSONDecoder().decode([Loader].self, from: data)
-        return result
+        let response: ScslCoreCLIEnvelope<[Loader]> = try await ScslCoreCLIService.shared.runJSON(arguments: ["modrinth", "loaders"])
+        return response.data
     }
 
     static func fetchCategories() async -> [Category] {
@@ -206,10 +161,8 @@ enum ModrinthService {
     }
 
     static func fetchCategoriesThrowing() async throws -> [Category] {
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: URLConfig.API.Modrinth.categoryTag)
-        let result = try JSONDecoder().decode([Category].self, from: data)
-        return result
+        let response: ScslCoreCLIEnvelope<[Category]> = try await ScslCoreCLIService.shared.runJSON(arguments: ["modrinth", "categories"])
+        return response.data
     }
 
     static func fetchGameVersions(includeSnapshots: Bool = false) async -> [GameVersion] {
@@ -226,20 +179,15 @@ enum ModrinthService {
     static func fetchGameVersionsThrowing(
         includeSnapshots: Bool = false
     ) async throws -> [GameVersion] {
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: URLConfig.API.Modrinth.gameVersionTag)
-        let result = try JSONDecoder().decode([GameVersion].self, from: data)
-        // 默认仅返回正式版，如果 includeSnapshots 为 true，则返回所有版本
-        return includeSnapshots ? result : result.filter { $0.version_type == "release" }
+        var arguments = ["modrinth", "game-versions"]
+        if includeSnapshots {
+            arguments.append("--include-snapshots")
+        }
+        let response: ScslCoreCLIEnvelope<[GameVersion]> = try await ScslCoreCLIService.shared.runJSON(arguments: arguments)
+        return response.data
     }
 
     static func fetchProjectDetails(id: String) async -> ModrinthProjectDetail? {
-        // 检查是否是 CurseForge 项目（ID 以 "cf-" 开头）
-        if id.hasPrefix("cf-") {
-            return await CurseForgeService.fetchProjectDetailsAsModrinth(id: id)
-        }
-
-        // 使用 Modrinth 服务
         do {
             return try await fetchProjectDetailsThrowing(id: id)
         } catch {
@@ -251,20 +199,17 @@ enum ModrinthService {
     }
 
     static func fetchProjectDetailsThrowing(id: String) async throws -> ModrinthProjectDetail {
-        // 检查是否是 CurseForge 项目（ID 以 "cf-" 开头）
         if id.hasPrefix("cf-") {
-            return try await CurseForgeService.fetchProjectDetailsAsModrinthThrowing(id: id)
+            throw GlobalError.validation(
+                chineseMessage: "CurseForge 已停用",
+                i18nKey: "error.validation.server_not_selected",
+                level: .notification
+            )
         }
-
-        // 使用 Modrinth 服务
-        let url = URLConfig.API.Modrinth.project(id: id)
-
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: url)
-
-        let decoder = JSONDecoder()
-        decoder.configureForModrinth()
-        var detail = try decoder.decode(ModrinthProjectDetail.self, from: data)
+        let response: ScslCoreCLIEnvelope<ModrinthProjectDetail> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["modrinth", "project", id]
+        )
+        var detail = response.data
 
         // 仅保留纯数字（含点号）的正式版游戏版本，例如 1.20.4
         let releaseGameVersions = detail.gameVersions.filter {
@@ -276,11 +221,6 @@ enum ModrinthService {
     }
 
     static func fetchProjectVersions(id: String) async -> [ModrinthProjectDetailVersion] {
-        // 检查是否是 CurseForge 项目（ID 以 "cf-" 开头）
-        if id.hasPrefix("cf-") {
-            return await CurseForgeService.fetchProjectVersionsAsModrinth(id: id)
-        }
-
         do {
             return try await fetchProjectVersionsThrowing(id: id)
         } catch {
@@ -292,19 +232,17 @@ enum ModrinthService {
     }
 
     static func fetchProjectVersionsThrowing(id: String) async throws -> [ModrinthProjectDetailVersion] {
-        // 检查是否是 CurseForge 项目（ID 以 "cf-" 开头）
         if id.hasPrefix("cf-") {
-            return try await CurseForgeService.fetchProjectVersionsAsModrinthThrowing(id: id)
+            throw GlobalError.validation(
+                chineseMessage: "CurseForge 已停用",
+                i18nKey: "error.validation.server_not_selected",
+                level: .notification
+            )
         }
-
-        let url = URLConfig.API.Modrinth.version(id: id)
-
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: url)
-
-        let decoder = JSONDecoder()
-        decoder.configureForModrinth()
-        return try decoder.decode([ModrinthProjectDetailVersion].self, from: data)
+        let response: ScslCoreCLIEnvelope<[ModrinthProjectDetailVersion]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["modrinth", "versions", id]
+        )
+        return response.data
     }
 
     static func fetchProjectVersionsFilter(
@@ -314,36 +252,34 @@ enum ModrinthService {
             type: String
         ) async throws -> [ModrinthProjectDetailVersion] {
             // 检查是否是 CurseForge 项目（ID 以 "cf-" 开头）
-            if id.hasPrefix("cf-") {
-                return try await CurseForgeService.fetchProjectVersionsFilterAsModrinth(
-                    id: id,
-                    selectedVersions: selectedVersions,
-                    selectedLoaders: selectedLoaders,
-                    type: type
+        if id.hasPrefix("cf-") {
+                throw GlobalError.validation(
+                    chineseMessage: "CurseForge 已停用",
+                    i18nKey: "error.validation.server_not_selected",
+                    level: .notification
                 )
             }
 
-            let versions = try await fetchProjectVersionsThrowing(id: id)
-            var loaders = selectedLoaders
-            if type == "datapack" {
-                loaders = ["datapack"]
-            } else if type == "resourcepack" {
-                loaders = ["minecraft"]
+            let selectedVersionsData = try JSONEncoder().encode(selectedVersions)
+            let selectedLoadersData = try JSONEncoder().encode(selectedLoaders)
+            guard let selectedVersionsJSON = String(data: selectedVersionsData, encoding: .utf8),
+                  let selectedLoadersJSON = String(data: selectedLoadersData, encoding: .utf8) else {
+                throw GlobalError.validation(
+                    chineseMessage: "版本筛选参数编码失败",
+                    i18nKey: "error.validation.search_condition_encode_failed",
+                    level: .notification
+                )
             }
-            return versions.filter { version in
-                // 必须同时满足版本和 loader 匹配
-                let versionMatch = selectedVersions.isEmpty || !Set(version.gameVersions).isDisjoint(with: selectedVersions)
-
-                // 对于shader和resourcepack，不检查loader匹配
-                let loaderMatch: Bool
-                if type == "shader" || type == "resourcepack" {
-                    loaderMatch = true
-                } else {
-                    loaderMatch = loaders.isEmpty || !Set(version.loaders).isDisjoint(with: loaders)
-                }
-
-                return versionMatch && loaderMatch
-            }
+            let response: ScslCoreCLIEnvelope<[ModrinthProjectDetailVersion]> = try await ScslCoreCLIService.shared.runJSON(
+                arguments: [
+                    "modrinth", "versions-filter",
+                    "--id", id,
+                    "--type", type,
+                    "--selected-versions-json", selectedVersionsJSON,
+                    "--selected-loaders-json", selectedLoadersJSON,
+                ]
+            )
+            return response.data
         }
 
     static func fetchProjectDependencies(
@@ -376,90 +312,36 @@ enum ModrinthService {
         selectedVersions: [String],
         selectedLoaders: [String]
     ) async throws -> ModrinthProjectDependency {
-        // 检查是否是 CurseForge 项目（ID 以 "cf-" 开头）
         if id.hasPrefix("cf-") {
-            return try await CurseForgeService.fetchProjectDependenciesThrowingAsModrinth(
-                type: type,
-                cachePath: cachePath,
-                id: id,
-                selectedVersions: selectedVersions,
-                selectedLoaders: selectedLoaders
+            throw GlobalError.validation(
+                chineseMessage: "CurseForge 已停用",
+                i18nKey: "error.validation.server_not_selected",
+                level: .notification
             )
         }
 
-        // 1. 获取所有筛选后的版本
-        let versions = try await fetchProjectVersionsFilter(
-            id: id,
-            selectedVersions: selectedVersions,
-            selectedLoaders: selectedLoaders,
-            type: type
+        let selectedVersionsData = try JSONEncoder().encode(selectedVersions)
+        let selectedLoadersData = try JSONEncoder().encode(selectedLoaders)
+        guard let selectedVersionsJSON = String(data: selectedVersionsData, encoding: .utf8),
+              let selectedLoadersJSON = String(data: selectedLoadersData, encoding: .utf8) else {
+            throw GlobalError.validation(
+                chineseMessage: "依赖参数编码失败",
+                i18nKey: "error.validation.search_condition_encode_failed",
+                level: .notification
+            )
+        }
+        let response: ScslCoreCLIEnvelope<ModrinthProjectDependency> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "modrinth", "dependencies",
+                "--id", id,
+                "--type", type,
+                "--selected-versions-json", selectedVersionsJSON,
+                "--selected-loaders-json", selectedLoadersJSON,
+            ]
         )
-        // 只取第一个版本
-        guard let firstVersion = versions.first else {
-            return ModrinthProjectDependency(projects: [])
-        }
-
-        // 2. 并发获取所有依赖项目的兼容版本（使用批处理限制并发数量）
-        let requiredDeps = firstVersion.dependencies.filter { $0.dependencyType == "required" && $0.projectId != nil }
-        let maxConcurrentTasks = 10 // 限制最大并发任务数
-        var allDependencyVersions: [ModrinthProjectDetailVersion] = []
-
-        // 分批处理依赖，每批最多 maxConcurrentTasks 个
-        var currentIndex = 0
-        while currentIndex < requiredDeps.count {
-            let endIndex = min(currentIndex + maxConcurrentTasks, requiredDeps.count)
-            let batch = Array(requiredDeps[currentIndex..<endIndex])
-            currentIndex = endIndex
-
-            let batchResults: [ModrinthProjectDetailVersion] = await withTaskGroup(of: ModrinthProjectDetailVersion?.self) { group in
-                for dep in batch {
-                    guard let projectId = dep.projectId else { continue }
-                    group.addTask {
-                        do {
-                            let depVersion: ModrinthProjectDetailVersion
-
-                            if let versionId = dep.versionId {
-                                // 如果有 versionId，直接获取指定版本
-                                depVersion = try await fetchProjectVersionThrowing(id: versionId)
-                            } else {
-                                // 如果没有 versionId，使用过滤逻辑获取兼容版本
-                                let depVersions = try await fetchProjectVersionsFilter(
-                                    id: projectId,
-                                    selectedVersions: selectedVersions,
-                                    selectedLoaders: selectedLoaders,
-                                    type: type
-                                )
-                                guard let firstDepVersion = depVersions.first else {
-                                    Logger.shared.warning("未找到兼容的依赖版本 (ID: \(projectId))")
-                                    return nil
-                                }
-                                depVersion = firstDepVersion
-                            }
-
-                            return depVersion
-                        } catch {
-                            let globalError = GlobalError.from(error)
-                            Logger.shared.error("获取依赖项目版本失败 (ID: \(projectId)): \(globalError.chineseMessage)")
-                            return nil
-                        }
-                    }
-                }
-
-                var results: [ModrinthProjectDetailVersion] = []
-                for await result in group {
-                    if let version = result {
-                        results.append(version)
-                    }
-                }
-
-                return results
-            }
-
-            allDependencyVersions.append(contentsOf: batchResults)
-        }
 
         // 3. 使用hash检查是否已安装，过滤出缺失的依赖
-        let missingDependencyVersions = allDependencyVersions.filter { version in
+        let missingDependencyVersions = response.data.projects.filter { version in
             // 获取主文件的hash
             guard let primaryFile = Self.filterPrimaryFiles(from: version.files) else {
                 return true // 如果没有主文件，认为缺失
@@ -472,14 +354,10 @@ enum ModrinthService {
     }
 
     static func fetchProjectVersionThrowing(id: String) async throws -> ModrinthProjectDetailVersion {
-        let url = URLConfig.API.Modrinth.versionId(versionId: id)
-
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: url)
-
-        let decoder = JSONDecoder()
-        decoder.configureForModrinth()
-        return try decoder.decode(ModrinthProjectDetailVersion.self, from: data)
+        let response: ScslCoreCLIEnvelope<ModrinthProjectDetailVersion> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["modrinth", "version", id]
+        )
+        return response.data
     }
 
     // 过滤主文件
@@ -488,38 +366,21 @@ enum ModrinthService {
     }
 
     static func fetchModrinthDetail(by hash: String, completion: @escaping (ModrinthProjectDetail?) -> Void) {
-        let url = URLConfig.API.Modrinth.versionFile(hash: hash)
-        let task = URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data = data else {
-                completion(nil)
-                return
-            }
-
-            let decoder = JSONDecoder()
-            decoder.configureForModrinth()
-
-            guard let version = try? decoder.decode(ModrinthProjectDetailVersion.self, from: data) else {
-                completion(nil)
-                return
-            }
-
-            Task {
-                do {
-                    let detail = try await Self.fetchProjectDetailsThrowing(id: version.projectId)
-                    await MainActor.run {
-                        completion(detail)
-                    }
-                } catch {
-                    let globalError = GlobalError.from(error)
-                    Logger.shared.error("通过哈希获取项目详情失败 (Hash: \(hash)): \(globalError.chineseMessage)")
-                    GlobalErrorHandler.shared.handle(globalError)
-                    await MainActor.run {
-                        completion(nil)
-                    }
-                }
+        Task {
+            do {
+                let response: ScslCoreCLIEnvelope<ModrinthProjectDetailVersion> = try await ScslCoreCLIService.shared.runJSON(
+                    arguments: ["modrinth", "file-by-hash", hash]
+                )
+                let version = response.data
+                let detail = try await Self.fetchProjectDetailsThrowing(id: version.projectId)
+                await MainActor.run { completion(detail) }
+            } catch {
+                let globalError = GlobalError.from(error)
+                Logger.shared.error("通过哈希获取项目详情失败 (Hash: \(hash)): \(globalError.chineseMessage)")
+                GlobalErrorHandler.shared.handle(globalError)
+                await MainActor.run { completion(nil) }
             }
         }
-        task.resume()
     }
 }
 

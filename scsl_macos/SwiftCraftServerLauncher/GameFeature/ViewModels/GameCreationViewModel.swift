@@ -178,34 +178,13 @@ class GameCreationViewModel: BaseGameFormViewModel {
             return
         }
 
-        var versions: [String] = []
-
-        switch loader.lowercased() {
-        case "fabric":
-            let fabricVersions = await FabricLoaderService.fetchAllLoaderVersions(for: gameVersion)
-            versions = fabricVersions.map { $0.loader.version }
-        case "forge":
-            do {
-                let forgeVersions = try await ForgeLoaderService.fetchAllForgeVersions(for: gameVersion)
-                versions = forgeVersions.loaders.map { $0.id }
-            } catch {
-                Logger.shared.error("获取 Forge 版本失败: \(error.localizedDescription)")
-                versions = []
-            }
-        case "neoforge":
-            do {
-                let neoforgeVersions = try await NeoForgeLoaderService.fetchAllNeoForgeVersions(for: gameVersion)
-                versions = neoforgeVersions.loaders.map { $0.id }
-            } catch {
-                Logger.shared.error("获取 NeoForge 版本失败: \(error.localizedDescription)")
-                versions = []
-            }
-        case "quilt":
-            let quiltVersions = await QuiltLoaderService.fetchAllQuiltLoaders(for: gameVersion)
-            versions = quiltVersions.map { $0.loader.version }
-        default:
-            versions = []
-        }
+        let loaderType = loader.lowercased() == "neoforge"
+            ? "neo"
+            : loader.lowercased()
+        let versions = await CommonService.fetchLoaderVersionIDs(
+            type: loaderType,
+            minecraftVersion: gameVersion
+        )
 
         availableLoaderVersions = versions
         // 如果当前选中的版本不在列表中，选择第一个版本

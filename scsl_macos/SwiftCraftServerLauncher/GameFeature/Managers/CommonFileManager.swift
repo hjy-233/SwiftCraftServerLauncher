@@ -26,6 +26,14 @@ class CommonFileManager {
         }
     }
 
+    private struct ProcessorExecutionRequest: Encodable {
+        let processor: Processor
+        let librariesDir: String
+        let gameVersion: String
+        let javaPath: String
+        let data: [String: String]?
+    }
+
     /// 下载 Forge JAR 文件（静默版本）
     /// - Parameter libraries: 要下载的库文件列表
     func downloadForgeJars(libraries: [ModrinthLoaderLibrary]) async {
@@ -208,12 +216,23 @@ class CommonFileManager {
     ///   - onProgressUpdate: 进度更新回调（可选，包含当前处理器索引和总处理器数量）
     /// - Throws: GlobalError 当处理失败时
     private func executeProcessor(_ processor: Processor, librariesDir: URL, gameVersion: String, javaPath: String, data: [String: String]? = nil, onProgressUpdate: ((String, Int, Int) -> Void)? = nil) async throws {
-        try await ProcessorExecutor.executeProcessor(
-            processor,
-            librariesDir: librariesDir,
+        let payload = ProcessorExecutionRequest(
+            processor: processor,
+            librariesDir: librariesDir.path,
             gameVersion: gameVersion,
             javaPath: javaPath,
             data: data
+        )
+        let requestData = try JSONEncoder().encode(payload)
+        guard let requestJSON = String(data: requestData, encoding: .utf8) else {
+            throw GlobalError.unknown(
+                chineseMessage: "无法编码处理器执行请求",
+                i18nKey: "error.unknown.generic",
+                level: .notification
+            )
+        }
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["game", "execute-processor", "--json", requestJSON]
         )
     }
 

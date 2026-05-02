@@ -2,9 +2,10 @@ import Foundation
 
 enum ServerScheduleCoreService {
     static func readSchedules(server: ServerInstance) async throws -> [ServerSchedule] {
-        let output = try await ScslCoreCLIService.shared.run(arguments: ["server", "schedules", "read", server.id])
-        let data = Data(output.utf8)
-        return try JSONDecoder().decode([ServerSchedule].self, from: data)
+        let response: ScslCoreCLIEnvelope<[ServerSchedule]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["server", "schedules", "read", server.id]
+        )
+        return response.data
     }
 
     static func writeSchedules(server: ServerInstance, schedules: [ServerSchedule]) async throws {
@@ -12,7 +13,7 @@ enum ServerScheduleCoreService {
         guard let json = String(data: data, encoding: .utf8) else {
             throw ScslCoreCLIError.invalidUTF8
         }
-        _ = try await ScslCoreCLIService.shared.run(
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
             arguments: ["server", "schedules", "write", server.id],
             standardInput: json
         )

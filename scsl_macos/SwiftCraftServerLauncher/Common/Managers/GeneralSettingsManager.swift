@@ -122,6 +122,37 @@ public enum ResourceCardStyle: String, CaseIterable, Identifiable {
 class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
     static let shared = GeneralSettingsManager()
 
+    private struct CoreBackedGeneralSettings: Codable {
+        struct BoolSetting: Codable {
+            let value: Bool
+
+            init(_ value: Bool) {
+                self.value = value
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                self.value = try container.decode(Bool.self)
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.singleValueContainer()
+                try container.encode(value)
+            }
+        }
+
+        let launcherWorkingDirectory: String?
+        let concurrentDownloads: Int?
+        let autoAcceptServerEULA: BoolSetting?
+        let backupAutoEnabled: BoolSetting?
+        let backupIntervalMinutes: Int?
+        let backupKeepCount: Int?
+        let backupDirectoryPath: String?
+        let backupBeforeUpdate: BoolSetting?
+    }
+
+    private var isApplyingCoreSettings = false
+
     /// 是否启用 GitHub 代理（默认开启）
     @AppStorage("enableGitHubProxy")
     var enableGitHubProxy: Bool = true {
@@ -152,6 +183,7 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
             if concurrentDownloads < 1 {
                 concurrentDownloads = 1
             }
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
@@ -159,7 +191,10 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
     // 新增：启动器工作目录
     @AppStorage("launcherWorkingDirectory")
     var launcherWorkingDirectory: String = AppPaths.launcherSupportDirectory.path {
-        didSet { objectWillChange.send() }
+        didSet {
+            persistCoreSettingsIfNeeded()
+            objectWillChange.send()
+        }
     }
 
     /// 界面风格：经典（列表 | 内容）/ 聚焦（内容 | 列表）
@@ -299,7 +334,10 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
 
     @AppStorage("autoAcceptServerEULA")
     var autoAcceptServerEULA: Bool = false {
-        didSet { objectWillChange.send() }
+        didSet {
+            persistCoreSettingsIfNeeded()
+            objectWillChange.send()
+        }
     }
 
     @AppStorage("openServerInNewWindow")
@@ -310,7 +348,10 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
     // MARK: - 备份
     @AppStorage("backupAutoEnabled")
     var backupAutoEnabled: Bool = false {
-        didSet { objectWillChange.send() }
+        didSet {
+            persistCoreSettingsIfNeeded()
+            objectWillChange.send()
+        }
     }
 
     @AppStorage("backupIntervalMinutes")
@@ -319,6 +360,7 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
             if backupIntervalMinutes < 5 {
                 backupIntervalMinutes = 5
             }
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
@@ -329,6 +371,7 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
             if backupKeepCount < 1 {
                 backupKeepCount = 1
             }
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
@@ -344,13 +387,17 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
             } else {
                 backupDirectoryPath = (trimmed as NSString).expandingTildeInPath
             }
+            persistCoreSettingsIfNeeded()
             objectWillChange.send()
         }
     }
 
     @AppStorage("backupBeforeUpdate")
     var backupBeforeUpdate: Bool = true {
-        didSet { objectWillChange.send() }
+        didSet {
+            persistCoreSettingsIfNeeded()
+            objectWillChange.send()
+        }
     }
 
     @AppStorage("backupLastTimestamp")
@@ -369,6 +416,8 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
                 backupDirectoryPath = expanded
             }
         }
+        loadCoreSettings()
+        persistCoreSettingsIfNeeded()
     }
 
     /// 当前启动器工作目录（WorkingPathProviding）
@@ -379,5 +428,65 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
 
     var workingPathWillChange: AnyPublisher<Void, Never> {
         objectWillChange.map { _ in () }.eraseToAnyPublisher()
+    }
+
+    private func loadCoreSettings() {
+        do {
+            let settings = try CoreSettingsBridge.read(
+                CoreBackedGeneralSettings.self,
+                scope: .general
+            )
+            isApplyingCoreSettings = true
+            defer { isApplyingCoreSettings = false }
+            if let launcherWorkingDirectory = settings.launcherWorkingDirectory,
+               !launcherWorkingDirectory.isEmpty {
+                self.launcherWorkingDirectory = launcherWorkingDirectory
+            }
+            if let concurrentDownloads = settings.concurrentDownloads {
+                self.concurrentDownloads = concurrentDownloads
+            }
+            if let autoAcceptServerEULA = settings.autoAcceptServerEULA?.value {
+                self.autoAcceptServerEULA = autoAcceptServerEULA
+            }
+            if let backupAutoEnabled = settings.backupAutoEnabled?.value {
+                self.backupAutoEnabled = backupAutoEnabled
+            }
+            if let backupIntervalMinutes = settings.backupIntervalMinutes {
+                self.backupIntervalMinutes = backupIntervalMinutes
+            }
+            if let backupKeepCount = settings.backupKeepCount {
+                self.backupKeepCount = backupKeepCount
+            }
+            if let backupDirectoryPath = settings.backupDirectoryPath,
+               !backupDirectoryPath.isEmpty {
+                self.backupDirectoryPath = backupDirectoryPath
+            }
+            if let backupBeforeUpdate = settings.backupBeforeUpdate?.value {
+                self.backupBeforeUpdate = backupBeforeUpdate
+            }
+        } catch {
+            Logger.shared.warning("读取 core general settings 失败: \(error.localizedDescription)")
+        }
+    }
+
+    private func persistCoreSettingsIfNeeded() {
+        guard !isApplyingCoreSettings else { return }
+        do {
+            try CoreSettingsBridge.write(
+                CoreBackedGeneralSettings(
+                    launcherWorkingDirectory: launcherWorkingDirectory,
+                    concurrentDownloads: concurrentDownloads,
+                    autoAcceptServerEULA: .init(autoAcceptServerEULA),
+                    backupAutoEnabled: .init(backupAutoEnabled),
+                    backupIntervalMinutes: backupIntervalMinutes,
+                    backupKeepCount: backupKeepCount,
+                    backupDirectoryPath: backupDirectoryPath,
+                    backupBeforeUpdate: .init(backupBeforeUpdate)
+                ),
+                scope: .general
+            )
+        } catch {
+            Logger.shared.warning("写入 core general settings 失败: \(error.localizedDescription)")
+        }
     }
 }

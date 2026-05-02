@@ -201,14 +201,28 @@ struct ServerPlayersView: View {
             loadRemoteLists()
             return
         }
-        let dir = AppPaths.serverDirectory(serverName: server.directoryName)
-        do {
-            whitelist = try ServerPlayerListService.readList(serverDir: dir, fileName: "whitelist.json")
-            ops = try ServerPlayerListService.readList(serverDir: dir, fileName: "ops.json")
-            bannedPlayers = try ServerPlayerListService.readList(serverDir: dir, fileName: "banned-players.json")
-            bannedIps = try ServerPlayerListService.readList(serverDir: dir, fileName: "banned-ips.json")
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
+        Task {
+            do {
+                async let loadedWhitelist = ServerPlayerListService.readList(server: server, fileName: "whitelist.json")
+                async let loadedOps = ServerPlayerListService.readList(server: server, fileName: "ops.json")
+                async let loadedBannedPlayers = ServerPlayerListService.readList(server: server, fileName: "banned-players.json")
+                async let loadedBannedIps = ServerPlayerListService.readList(server: server, fileName: "banned-ips.json")
+
+                let values = try await (
+                    loadedWhitelist,
+                    loadedOps,
+                    loadedBannedPlayers,
+                    loadedBannedIps
+                )
+                await MainActor.run {
+                    whitelist = values.0
+                    ops = values.1
+                    bannedPlayers = values.2
+                    bannedIps = values.3
+                }
+            } catch {
+                GlobalErrorHandler.shared.handle(error)
+            }
         }
     }
 
@@ -218,14 +232,19 @@ struct ServerPlayersView: View {
             return
         }
         if serverStatusManager.isServerRunning(serverId: server.id) { return }
-        let dir = AppPaths.serverDirectory(serverName: server.directoryName)
-        do {
-            try ServerPlayerListService.writeList(serverDir: dir, fileName: "whitelist.json", entries: whitelist)
-            try ServerPlayerListService.writeList(serverDir: dir, fileName: "ops.json", entries: ops)
-            try ServerPlayerListService.writeList(serverDir: dir, fileName: "banned-players.json", entries: bannedPlayers)
-            try ServerPlayerListService.writeList(serverDir: dir, fileName: "banned-ips.json", entries: bannedIps)
-        } catch {
-            GlobalErrorHandler.shared.handle(error)
+        let currentWhitelist = whitelist
+        let currentOps = ops
+        let currentBannedPlayers = bannedPlayers
+        let currentBannedIps = bannedIps
+        Task {
+            do {
+                try await ServerPlayerListService.writeList(server: server, fileName: "whitelist.json", entries: currentWhitelist)
+                try await ServerPlayerListService.writeList(server: server, fileName: "ops.json", entries: currentOps)
+                try await ServerPlayerListService.writeList(server: server, fileName: "banned-players.json", entries: currentBannedPlayers)
+                try await ServerPlayerListService.writeList(server: server, fileName: "banned-ips.json", entries: currentBannedIps)
+            } catch {
+                GlobalErrorHandler.shared.handle(error)
+            }
         }
     }
 

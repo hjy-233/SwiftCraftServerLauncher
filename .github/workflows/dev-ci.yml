@@ -23,6 +23,9 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install linters
         run: brew install swiftlint swiftformat
 
@@ -37,6 +40,15 @@ jobs:
 
       - name: SwiftLint (checkstyle)
         run: swiftlint lint --strict --reporter checkstyle > swiftlint.xml
+
+      - name: Rust fmt
+        run: cargo fmt --manifest-path scsl_core/Cargo.toml --all --check
+
+      - name: Rust build
+        run: cargo build --manifest-path scsl_core/Cargo.toml -p scsl_cli
+
+      - name: Rust tests
+        run: cargo test --manifest-path scsl_core/Cargo.toml -p scsl_cli --no-run
 
       - name: Reviewdog (PR comments)
         if: github.event_name == 'pull_request'
@@ -80,7 +92,7 @@ jobs:
       - name: Build
         run: |
           xcodebuild \
-            -project SwiftCraftServerLauncher.xcodeproj \
+            -project scsl_macos/SwiftCraftServerLauncher.xcodeproj \
             -scheme SwiftCraftLauncher \
             -configuration Debug \
             -destination "platform=macOS" \

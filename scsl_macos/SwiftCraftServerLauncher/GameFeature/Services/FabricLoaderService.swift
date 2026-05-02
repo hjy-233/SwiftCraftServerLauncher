@@ -21,28 +21,12 @@ enum FabricLoaderService {
     /// - Returns: 加载器版本列表
     /// - Throws: GlobalError 当操作失败时
     static func fetchAllLoaderVersionsThrowing(for minecraftVersion: String) async throws -> [FabricLoader] {
-        let url = URLConfig.API.Fabric.loader.appendingPathComponent(minecraftVersion)
-        // 使用统一的 API 客户端
-        let data = try await APIClient.get(url: url)
-
-        var result: [FabricLoader] = []
-        do {
-            if let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                for item in jsonArray {
-                    let singleData = try JSONSerialization.data(withJSONObject: item)
-                    let decoder = JSONDecoder()
-                    if let loader = try? decoder.decode(FabricLoader.self, from: singleData) {
-                        result.append(loader)
-                    }
-                }
-            }
-            return result
-        } catch {
-            throw GlobalError.validation(
-                chineseMessage: "解析 Fabric 加载器版本数据失败: \(error.localizedDescription)",
-                i18nKey: "error.validation.fabric_loader_parse_failed",
-                level: .notification
-            )
+        let result = try await CommonService.fetchAllLoaderVersionsThrowing(
+            type: "fabric",
+            minecraftVersion: minecraftVersion
+        )
+        return result.loaders.map { loader in
+            FabricLoader(loader: .init(version: loader.id))
         }
     }
 
@@ -60,12 +44,10 @@ enum FabricLoaderService {
             return cached
         }
 
-        // 2. 直接下载指定版本的 version.json
-        // 使用统一的 API 客户端
-        let url = URLConfig.API.Modrinth.loaderProfile(loader: "fabric", version: loaderVersion)
-        let data = try await APIClient.get(url: url)
-
-        var result = try JSONDecoder().decode(ModrinthLoader.self, from: data)
+        let response: ScslCoreCLIEnvelope<ModrinthLoader> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["modrinth", "loader-profile", "--loader", "fabric", "--version", loaderVersion]
+        )
+        var result = response.data
         result.version = loaderVersion
         result = CommonService.processGameVersionPlaceholders(loader: result, gameVersion: minecraftVersion)
         // 3. 存入缓存

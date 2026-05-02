@@ -29,6 +29,17 @@ actor ScslCoreCLIService {
     private init() {}
 
     func run(arguments: [String], standardInput: String? = nil) async throws -> String {
+        let envelope: ScslCoreCLIEnvelope<String> = try await runJSON(
+            arguments: arguments,
+            standardInput: standardInput
+        )
+        return envelope.data
+    }
+
+    func runJSON<T: Decodable>(
+        arguments: [String],
+        standardInput: String? = nil
+    ) async throws -> ScslCoreCLIEnvelope<T> {
         try await ensureBinary()
         let binaryURL = try cliBinaryURL()
         let result = try await runProcess(
@@ -37,15 +48,21 @@ actor ScslCoreCLIService {
             standardInput: standardInput
         )
 
-        guard result.status == 0 else {
-            let detail = result.combinedOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw ScslCoreCLIError.executionFailed(detail.isEmpty ? "无输出" : detail)
-        }
-
-        guard let output = String(data: result.stdout, encoding: .utf8) else {
+        let payload = result.status == 0 ? result.stdout : result.stderr
+        guard let output = String(data: payload, encoding: .utf8) else {
             throw ScslCoreCLIError.invalidUTF8
         }
-        return output
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8) else {
+            throw ScslCoreCLIError.invalidUTF8
+        }
+
+        let decoder = JSONDecoder()
+        let envelope = try decoder.decode(ScslCoreCLIEnvelope<T>.self, from: data)
+        guard result.status == 0 else {
+            throw ScslCoreCLIError.executionFailed(envelope.error?.message ?? "无输出")
+        }
+        return envelope
     }
 
     private func ensureBinary() async throws {
@@ -142,14 +159,49 @@ actor ScslCoreCLIService {
     }
 }
 
+struct ScslCoreCLIEnvelope<T: Decodable>: Decodable {
+    let ok: Bool
+    let data: T
+    let error: ScslCoreCLIEnvelopeError?
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case data
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.ok = try container.decode(Bool.self, forKey: .ok)
+        self.error = try container.decodeIfPresent(ScslCoreCLIEnvelopeError.self, forKey: .error)
+        self.data = try container.decodeIfPresent(T.self, forKey: .data) ?? Self.decodeDefaultValue()
+    }
+
+    private static func decodeDefaultValue() throws -> T {
+        if T.self == EmptyCLIResponse.self, let empty = EmptyCLIResponse() as? T {
+            return empty
+        }
+        throw DecodingError.valueNotFound(
+            T.self,
+            DecodingError.Context(codingPath: [], debugDescription: "scsl_cli 返回缺少 data 字段")
+        )
+    }
+}
+
+struct ScslCoreCLIEnvelopeError: Decodable {
+    let message: String
+}
+
+struct EmptyCLIResponse: Decodable {}
+
 private struct ProcessResult {
     let status: Int32
     let stdout: Data
     let stderr: Data
 
     var combinedOutput: String {
-        let out = String(data: stdout, encoding: .utf8) ?? ""
-        let err = String(data: stderr, encoding: .utf8) ?? ""
+        let out = String(bytes: stdout, encoding: .utf8) ?? ""
+        let err = String(bytes: stderr, encoding: .utf8) ?? ""
         if out.isEmpty {
             return err
         }

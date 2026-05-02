@@ -16,6 +16,13 @@ pub struct LocalServerFileEntry {
     pub file_size: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalLogPollResult {
+    pub file_path: Option<String>,
+    pub appended_text: String,
+    pub next_offset: u64,
+}
+
 pub struct LocalServerRuntime {
     planner: ServerLaunchPlanner,
 }
@@ -66,6 +73,77 @@ impl LocalServerRuntime {
         } else {
             Err(CoreError::runtime(combined.trim().to_string()))
         }
+    }
+
+    pub fn poll_local_log(
+        &self,
+        server: &ServerInstance,
+        current_file_path: Option<&str>,
+        offset: u64,
+    ) -> Result<LocalLogPollResult, CoreError> {
+        if !server.is_local() {
+            return Err(CoreError::unsupported(
+                "local CLI runtime only supports local servers",
+            ));
+        }
+
+        let server_dir = self.server_dir(server);
+        for file in self.local_log_candidates(&server_dir) {
+            if !file.exists() {
+                continue;
+            }
+
+            let file_path = file.to_string_lossy().to_string();
+            let effective_offset = if current_file_path == Some(file_path.as_str()) {
+                offset
+            } else {
+                0
+            };
+
+            if let Some((appended_text, next_offset)) =
+                self.read_local_log_update(&file, effective_offset)?
+            {
+                return Ok(LocalLogPollResult {
+                    file_path: Some(file_path),
+                    appended_text,
+                    next_offset,
+                });
+            }
+        }
+
+        Ok(LocalLogPollResult {
+            file_path: None,
+            appended_text: String::new(),
+            next_offset: 0,
+        })
+    }
+
+    fn local_log_candidates(&self, server_dir: &Path) -> [PathBuf; 4] {
+        [
+            server_dir.join("scsl-server.log"),
+            server_dir.join("logs/latest.log"),
+            server_dir.join("latest.log"),
+            server_dir.join("server.log"),
+        ]
+    }
+
+    fn read_local_log_update(
+        &self,
+        file: &Path,
+        offset: u64,
+    ) -> Result<Option<(String, u64)>, CoreError> {
+        let metadata = fs::metadata(file)
+            .map_err(|error| CoreError::runtime(format!("failed to inspect log file: {error}")))?;
+        let file_size = metadata.len();
+        let safe_offset = offset.min(file_size);
+        let bytes = fs::read(file)
+            .map_err(|error| CoreError::runtime(format!("failed to read log file: {error}")))?;
+        let appended = if safe_offset as usize >= bytes.len() {
+            String::new()
+        } else {
+            String::from_utf8_lossy(&bytes[safe_offset as usize..]).into_owned()
+        };
+        Ok(Some((appended, file_size)))
     }
 
     pub fn send_command(&self, server: &ServerInstance, command: &str) -> Result<(), CoreError> {
@@ -397,6 +475,17 @@ impl LocalServerRuntime {
             .map_err(|error| CoreError::runtime(format!("failed to encode schedules json: {error}")))?;
         fs::write(&path, format!("{normalized}\n"))
             .map_err(|error| CoreError::runtime(format!("failed to write schedules.json: {error}")))
+    }
+
+    pub fn remove_server_directory(&self, server: &ServerInstance) -> Result<(), CoreError> {
+        if !server.is_local() {
+            return Err(CoreError::unsupported(
+                "local CLI runtime only supports local servers",
+            ));
+        }
+
+        let path = self.server_dir(server);
+        remove_existing_path(&path)
     }
 
     fn collect_server_files(

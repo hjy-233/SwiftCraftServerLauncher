@@ -275,15 +275,8 @@ struct ServerConsoleView: View {
         isRemoteServer && isRconMode
     }
 
-    private func currentLocalLogSnapshot(serverName: String) -> String {
-        let serverDir = AppPaths.serverDirectory(serverName: serverName)
-        let candidates = localLogCandidates(serverDir: serverDir)
-        for file in candidates where FileManager.default.fileExists(atPath: file.path) {
-            if let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty {
-                return text.components(separatedBy: .newlines).suffix(300).joined(separator: "\n")
-            }
-        }
-        return ""
+    private func currentLocalLogSnapshot(serverName _: String) -> String {
+        lastLocalPolledText
     }
 
     private func startRemoteLogPollingIfNeeded() {
@@ -330,25 +323,26 @@ struct ServerConsoleView: View {
 
     @MainActor
     private func loadLocalLog(serverName: String) async {
-        let serverDir = AppPaths.serverDirectory(serverName: serverName)
-        let candidates = localLogCandidates(serverDir: serverDir)
-        for file in candidates where FileManager.default.fileExists(atPath: file.path) {
-            if lastLocalLogFilePath != file.path {
-                lastLocalLogFilePath = file.path
-                lastLocalLogOffset = 0
+        do {
+            var arguments = ["server", "local-log-poll", server.id, "--offset", String(lastLocalLogOffset)]
+            if !lastLocalLogFilePath.isEmpty {
+                arguments.append(contentsOf: ["--current-file-path", lastLocalLogFilePath])
+            }
+            let response: ScslCoreCLIEnvelope<LocalLogPollCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
+                arguments: arguments
+            )
+            let update = response.data
+            let filePath = update.filePath ?? ""
+            if lastLocalLogFilePath != filePath {
+                lastLocalLogFilePath = filePath
                 lastLocalPolledText = ""
             }
-
-            guard let update = readLocalLogUpdate(from: file, offset: lastLocalLogOffset) else {
-                continue
-            }
-
             lastLocalLogOffset = update.nextOffset
             if update.appendedText.isEmpty {
                 return
             }
 
-            Logger.shared.debug("本地控制台读取日志增量: \(file.path)")
+            Logger.shared.debug("本地控制台读取日志增量: \(filePath)")
             let combined = lastLocalPolledText + update.appendedText
             let current = combined.components(separatedBy: .newlines).suffix(300).joined(separator: "\n")
             let delta = incrementalDelta(previous: lastLocalPolledText, current: current)
@@ -356,43 +350,8 @@ struct ServerConsoleView: View {
                 console.appendExternal(serverId: server.id, text: delta + "\n")
             }
             lastLocalPolledText = current
-            return
-        }
-        Logger.shared.debug("本地控制台未找到可读日志文件: \(serverDir.path)")
-    }
-
-    private func localLogCandidates(serverDir: URL) -> [URL] {
-        [
-            serverDir.appendingPathComponent("scsl-server.log"),
-            serverDir.appendingPathComponent("logs/latest.log"),
-            serverDir.appendingPathComponent("latest.log"),
-            serverDir.appendingPathComponent("server.log"),
-        ]
-    }
-
-    private func readLocalLogUpdate(from file: URL, offset: UInt64) -> (appendedText: String, nextOffset: UInt64)? {
-        guard
-            let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
-            let fileSizeNumber = attributes[.size] as? NSNumber
-        else {
-            return nil
-        }
-
-        let fileSize = fileSizeNumber.uint64Value
-        let safeOffset = min(offset, fileSize)
-
-        guard let handle = try? FileHandle(forReadingFrom: file) else {
-            return nil
-        }
-        defer { try? handle.close() }
-
-        do {
-            try handle.seek(toOffset: safeOffset)
-            let data = try handle.readToEnd() ?? Data()
-            return (String(decoding: data, as: UTF8.self), fileSize)
         } catch {
-            Logger.shared.debug("本地控制台读取日志增量失败: \(file.path) - \(error.localizedDescription)")
-            return nil
+            Logger.shared.debug("本地控制台读取日志增量失败: \(serverName) - \(error.localizedDescription)")
         }
     }
 
@@ -481,9 +440,10 @@ struct ServerConsoleView: View {
     private func sendLocalRCONCommand(_ command: String) {
         Task {
             do {
-                let output = try await ScslCoreCLIService.shared.run(
+                let response: ScslCoreCLIEnvelope<RconCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
                     arguments: ["server", "rcon", server.id, command]
                 )
+                let output = response.data.output
                 await MainActor.run {
                     if !output.isEmpty {
                         console.appendExternal(
@@ -498,6 +458,16 @@ struct ServerConsoleView: View {
                 }
             }
         }
+    }
+
+    private struct RconCLIResponse: Decodable {
+        let output: String
+    }
+
+    private struct LocalLogPollCLIResponse: Decodable {
+        let filePath: String?
+        let appendedText: String
+        let nextOffset: UInt64
     }
 
     private func filterNoisyRconLifecycleLogs(_ raw: String) -> String {

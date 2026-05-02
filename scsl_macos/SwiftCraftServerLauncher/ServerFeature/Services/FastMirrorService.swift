@@ -119,32 +119,36 @@ enum FastMirrorService {
     private static let baseURL = URL(string: "https://download.fastmirror.net/api/v3") ?? URL(fileURLWithPath: "/")
 
     static func fetchGameVersions(coreName: String, baseURL: URL? = nil) async throws -> [String] {
-        let info: CoreInfo = try await requestData(pathComponents: [coreName], baseURL: baseURL)
-        return info.mcVersions
+        let response: ScslCoreCLIEnvelope<[String]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "mirror", "fastmirror-game-versions",
+                "--core-name", coreName,
+                "--base-url", resolvedBaseURL(baseURL),
+            ],
+        )
+        return response.data
     }
 
     static func fetchCores(baseURL: URL? = nil) async throws -> [CoreSummary] {
-        let list: [CoreSummary] = try await requestData(pathComponents: [], baseURL: baseURL)
-        return list
+        let response: ScslCoreCLIEnvelope<[CoreSummary]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "mirror", "fastmirror-cores",
+                "--base-url", resolvedBaseURL(baseURL),
+            ],
+        )
+        return response.data
     }
 
     static func fetchCoreVersions(coreName: String, gameVersion: String, baseURL: URL? = nil) async throws -> [String] {
-        let list: BuildList = try await requestData(
-            pathComponents: [coreName, gameVersion],
-            queryItems: [
-                URLQueryItem(name: "offset", value: "0"),
-                URLQueryItem(name: "limit", value: "25"),
+        let response: ScslCoreCLIEnvelope<[String]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "mirror", "fastmirror-core-versions",
+                "--core-name", coreName,
+                "--game-version", gameVersion,
+                "--base-url", resolvedBaseURL(baseURL),
             ],
-            baseURL: baseURL
         )
-        let versions = list.builds.map { $0.coreVersion }
-        var seen: Set<String> = []
-        var unique: [String] = []
-        for version in versions where !seen.contains(version) {
-            seen.insert(version)
-            unique.append(version)
-        }
-        return unique
+        return response.data
     }
 
     static func fetchCoreDetail(
@@ -153,10 +157,16 @@ enum FastMirrorService {
         coreVersion: String,
         baseURL: URL? = nil
     ) async throws -> CoreDetail {
-        return try await requestData(
-            pathComponents: [coreName, gameVersion, coreVersion],
-            baseURL: baseURL
+        let response: ScslCoreCLIEnvelope<CoreDetail> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "mirror", "fastmirror-detail",
+                "--core-name", coreName,
+                "--game-version", gameVersion,
+                "--core-version", coreVersion,
+                "--base-url", resolvedBaseURL(baseURL),
+            ],
         )
+        return response.data
     }
 
     static func coreName(for serverType: ServerType) -> String {
@@ -189,51 +199,15 @@ enum FastMirrorService {
         }
     }
 
-    private static func requestData<T: Decodable>(
-        pathComponents: [String],
-        queryItems: [URLQueryItem] = [],
-        baseURL: URL? = nil
-    ) async throws -> T {
-        let url = buildURL(pathComponents: pathComponents, queryItems: queryItems, baseURL: baseURL)
-        let data = try await APIClient.get(url: url, headers: ["Accept": "application/json"])
-        if let wrapped = try? JSONDecoder().decode(Response<T>.self, from: data) {
-            guard wrapped.success, let payload = wrapped.data else {
-                throw GlobalError.network(
-                    chineseMessage: wrapped.message ?? "镜像服务不可用",
-                    i18nKey: "error.network.api_request_failed",
-                    level: .notification
-                )
-            }
-            return payload
-        }
-        if let direct = try? JSONDecoder().decode(T.self, from: data) {
-            return direct
-        }
-        throw GlobalError.network(
-            chineseMessage: "镜像服务数据格式不正确",
-            i18nKey: "error.network.api_request_failed",
-            level: .notification
-        )
-    }
-
-    private static func buildURL(pathComponents: [String], queryItems: [URLQueryItem], baseURL: URL?) -> URL {
-        let resolvedBase = normalizeBaseURL(baseURL ?? Self.baseURL)
-        let base = pathComponents.reduce(resolvedBase) { partial, component in
-            partial.appendingPathComponent(component)
-        }
-        guard !queryItems.isEmpty,
-              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
-            return base
-        }
-        components.queryItems = queryItems
-        return components.url ?? base
-    }
-
     private static func normalizeBaseURL(_ url: URL) -> URL {
         let path = url.path.lowercased()
         if path.contains("/api/v3") {
             return url
         }
         return url.appendingPathComponent("api/v3")
+    }
+
+    private static func resolvedBaseURL(_ url: URL?) -> String {
+        normalizeBaseURL(url ?? Self.baseURL).absoluteString
     }
 }

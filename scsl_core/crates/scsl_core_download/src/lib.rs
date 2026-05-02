@@ -337,6 +337,7 @@ fn compute_sha1(path: impl AsRef<Path>) -> Result<String, CoreError> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use super::{
         ResourceDownloadPlanner, ResourceType, fabric_server_jar_target, forge_installer_target,
         java_component_for_major, mirror_direct_target,
