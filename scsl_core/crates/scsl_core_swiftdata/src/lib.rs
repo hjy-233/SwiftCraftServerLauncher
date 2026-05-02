@@ -68,8 +68,9 @@ impl SwiftDataServerStore {
 
     fn open_connection(&self) -> Result<Connection, CoreError> {
         if let Some(parent) = self.db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| CoreError::storage(format!("failed to create database directory: {error}")))?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                CoreError::storage(format!("failed to create database directory: {error}"))
+            })?;
         }
         let connection = Connection::open(&self.db_path).map_err(storage_error)?;
         connection
@@ -212,7 +213,9 @@ fn platform_app_data_dir() -> Result<PathBuf, CoreError> {
 
 fn env_path(key: &str) -> Result<PathBuf, CoreError> {
     optional_env_path(key).ok_or_else(|| {
-        CoreError::storage(format!("failed to resolve required environment variable: {key}"))
+        CoreError::storage(format!(
+            "failed to resolve required environment variable: {key}"
+        ))
     })
 }
 

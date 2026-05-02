@@ -602,11 +602,19 @@ fn parse_server_command(parser: &mut ArgCursor) -> Result<ServerCommand, CoreErr
             id: parser.required("server id")?,
             command: parser.required("command")?,
         })),
-        "properties" => Ok(ServerCommand::Properties(parse_server_properties_command(parser)?)),
+        "properties" => Ok(ServerCommand::Properties(parse_server_properties_command(
+            parser,
+        )?)),
         "files" => Ok(ServerCommand::Files(parse_server_files_command(parser)?)),
-        "players" => Ok(ServerCommand::Players(parse_server_players_command(parser)?)),
-        "schedules" => Ok(ServerCommand::Schedules(parse_server_schedules_command(parser)?)),
-        other => Err(CoreError::validation(format!("unknown server command: {other}"))),
+        "players" => Ok(ServerCommand::Players(parse_server_players_command(
+            parser,
+        )?)),
+        "schedules" => Ok(ServerCommand::Schedules(parse_server_schedules_command(
+            parser,
+        )?)),
+        other => Err(CoreError::validation(format!(
+            "unknown server command: {other}"
+        ))),
     }
 }
 
@@ -620,17 +628,21 @@ fn parse_mirror_command(parser: &mut ArgCursor) -> Result<MirrorCommand, CoreErr
             core_name: parser.required_flag_value("--core-name")?,
             base_url: optional_flag_value(parser, "--base-url"),
         })),
-        "fastmirror-core-versions" => Ok(MirrorCommand::FastMirrorCoreVersions(MirrorCoreGameVersionArgs {
-            core_name: parser.required_flag_value("--core-name")?,
-            game_version: parser.required_flag_value("--game-version")?,
-            base_url: optional_flag_value(parser, "--base-url"),
-        })),
-        "fastmirror-detail" => Ok(MirrorCommand::FastMirrorDetail(MirrorCoreVersionDetailArgs {
-            core_name: parser.required_flag_value("--core-name")?,
-            game_version: parser.required_flag_value("--game-version")?,
-            core_version: parser.required_flag_value("--core-version")?,
-            base_url: optional_flag_value(parser, "--base-url"),
-        })),
+        "fastmirror-core-versions" => Ok(MirrorCommand::FastMirrorCoreVersions(
+            MirrorCoreGameVersionArgs {
+                core_name: parser.required_flag_value("--core-name")?,
+                game_version: parser.required_flag_value("--game-version")?,
+                base_url: optional_flag_value(parser, "--base-url"),
+            },
+        )),
+        "fastmirror-detail" => Ok(MirrorCommand::FastMirrorDetail(
+            MirrorCoreVersionDetailArgs {
+                core_name: parser.required_flag_value("--core-name")?,
+                game_version: parser.required_flag_value("--game-version")?,
+                core_version: parser.required_flag_value("--core-version")?,
+                base_url: optional_flag_value(parser, "--base-url"),
+            },
+        )),
         "polars-core-types" => Ok(MirrorCommand::PolarsCoreTypes(MirrorBaseUrlArgs {
             base_url: optional_flag_value(parser, "--base-url"),
         })),
@@ -650,12 +662,14 @@ fn parse_mirror_command(parser: &mut ArgCursor) -> Result<MirrorCommand, CoreErr
             base_url: parser.required_flag_value("--base-url")?,
             core_name: parser.required_flag_value("--core-name")?,
         })),
-        "custom-core-versions" => Ok(MirrorCommand::CustomCoreVersions(MirrorCustomCoreGameArgs {
-            config_json: parser.required_flag_value("--config-json")?,
-            base_url: parser.required_flag_value("--base-url")?,
-            core_name: parser.required_flag_value("--core-name")?,
-            game_version: parser.required_flag_value("--game-version")?,
-        })),
+        "custom-core-versions" => Ok(MirrorCommand::CustomCoreVersions(
+            MirrorCustomCoreGameArgs {
+                config_json: parser.required_flag_value("--config-json")?,
+                base_url: parser.required_flag_value("--base-url")?,
+                core_name: parser.required_flag_value("--core-name")?,
+                game_version: parser.required_flag_value("--game-version")?,
+            },
+        )),
         "custom-detail" => Ok(MirrorCommand::CustomDetail(MirrorCustomDetailArgs {
             config_json: parser.required_flag_value("--config-json")?,
             base_url: parser.required_flag_value("--base-url")?,
@@ -663,7 +677,9 @@ fn parse_mirror_command(parser: &mut ArgCursor) -> Result<MirrorCommand, CoreErr
             game_version: parser.required_flag_value("--game-version")?,
             core_version: parser.required_flag_value("--core-version")?,
         })),
-        other => Err(CoreError::validation(format!("unknown mirror command: {other}"))),
+        other => Err(CoreError::validation(format!(
+            "unknown mirror command: {other}"
+        ))),
     }
 }
 
@@ -684,17 +700,23 @@ fn parse_modrinth_command(parser: &mut ArgCursor) -> Result<ModrinthCommand, Cor
                     }
                     "--offset" => {
                         parser.next();
-                        offset = parser
-                            .required_value("--offset")?
-                            .parse::<i32>()
-                            .map_err(|error| CoreError::validation(format!("invalid offset: {error}")))?;
+                        offset =
+                            parser
+                                .required_value("--offset")?
+                                .parse::<i32>()
+                                .map_err(|error| {
+                                    CoreError::validation(format!("invalid offset: {error}"))
+                                })?;
                     }
                     "--limit" => {
                         parser.next();
-                        limit = parser
-                            .required_value("--limit")?
-                            .parse::<i32>()
-                            .map_err(|error| CoreError::validation(format!("invalid limit: {error}")))?;
+                        limit =
+                            parser
+                                .required_value("--limit")?
+                                .parse::<i32>()
+                                .map_err(|error| {
+                                    CoreError::validation(format!("invalid limit: {error}"))
+                                })?;
                     }
                     "--query" => {
                         parser.next();
@@ -737,12 +759,14 @@ fn parse_modrinth_command(parser: &mut ArgCursor) -> Result<ModrinthCommand, Cor
             loader: parser.required_flag_value("--loader")?,
             version: parser.required_flag_value("--version")?,
         })),
-        "versions-filter" => Ok(ModrinthCommand::VersionsFilter(ModrinthVersionsFilterArgs {
-            id: parser.required_flag_value("--id")?,
-            type_name: parser.required_flag_value("--type")?,
-            selected_versions_json: parser.required_flag_value("--selected-versions-json")?,
-            selected_loaders_json: parser.required_flag_value("--selected-loaders-json")?,
-        })),
+        "versions-filter" => Ok(ModrinthCommand::VersionsFilter(
+            ModrinthVersionsFilterArgs {
+                id: parser.required_flag_value("--id")?,
+                type_name: parser.required_flag_value("--type")?,
+                selected_versions_json: parser.required_flag_value("--selected-versions-json")?,
+                selected_loaders_json: parser.required_flag_value("--selected-loaders-json")?,
+            },
+        )),
         "dependencies" => Ok(ModrinthCommand::Dependencies(ModrinthDependenciesArgs {
             id: parser.required_flag_value("--id")?,
             type_name: parser.required_flag_value("--type")?,
@@ -766,7 +790,9 @@ fn parse_modrinth_command(parser: &mut ArgCursor) -> Result<ModrinthCommand, Cor
                 include_snapshots,
             }))
         }
-        other => Err(CoreError::validation(format!("unknown modrinth command: {other}"))),
+        other => Err(CoreError::validation(format!(
+            "unknown modrinth command: {other}"
+        ))),
     }
 }
 
@@ -808,28 +834,46 @@ fn parse_server_files_command(parser: &mut ArgCursor) -> Result<ServerFilesComma
         "list" => Ok(ServerFilesCommand::List(ServerIdArgs {
             id: parser.required("server id")?,
         })),
-        "read" => Ok(ServerFilesCommand::Read(parse_server_file_path_args(parser)?)),
-        "write" => Ok(ServerFilesCommand::Write(parse_server_file_path_args(parser)?)),
-        "mkdir" => Ok(ServerFilesCommand::Mkdir(parse_server_file_path_args(parser)?)),
-        "touch" => Ok(ServerFilesCommand::Touch(parse_server_file_path_args(parser)?)),
+        "read" => Ok(ServerFilesCommand::Read(parse_server_file_path_args(
+            parser,
+        )?)),
+        "write" => Ok(ServerFilesCommand::Write(parse_server_file_path_args(
+            parser,
+        )?)),
+        "mkdir" => Ok(ServerFilesCommand::Mkdir(parse_server_file_path_args(
+            parser,
+        )?)),
+        "touch" => Ok(ServerFilesCommand::Touch(parse_server_file_path_args(
+            parser,
+        )?)),
         "move" => {
             let id = parser.required("server id")?;
             let from = parser.required_flag_value("--from")?;
             let to = parser.required_flag_value("--to")?;
-            Ok(ServerFilesCommand::Move(ServerFileMoveArgs { id, from, to }))
+            Ok(ServerFilesCommand::Move(ServerFileMoveArgs {
+                id,
+                from,
+                to,
+            }))
         }
-        "delete" => Ok(ServerFilesCommand::Delete(parse_server_file_path_args(parser)?)),
+        "delete" => Ok(ServerFilesCommand::Delete(parse_server_file_path_args(
+            parser,
+        )?)),
         "import" => {
             let id = parser.required("server id")?;
             let source = PathBuf::from(parser.required_flag_value("--source")?);
-            let directory = parser.optional_flag_value("--directory")?.unwrap_or_default();
+            let directory = parser
+                .optional_flag_value("--directory")?
+                .unwrap_or_default();
             Ok(ServerFilesCommand::Import(ServerFileImportArgs {
                 id,
                 source,
                 directory,
             }))
         }
-        other => Err(CoreError::validation(format!("unknown server files command: {other}"))),
+        other => Err(CoreError::validation(format!(
+            "unknown server files command: {other}"
+        ))),
     }
 }
 
@@ -850,9 +894,7 @@ fn parse_server_schedules_command(
     }
 }
 
-fn parse_server_players_command(
-    parser: &mut ArgCursor,
-) -> Result<ServerPlayersCommand, CoreError> {
+fn parse_server_players_command(parser: &mut ArgCursor) -> Result<ServerPlayersCommand, CoreError> {
     let command = parser.required("server players command")?;
     match command.as_str() {
         "read" => Ok(ServerPlayersCommand::Read(ServerPlayerListArgs {
@@ -879,7 +921,9 @@ fn parse_resource_command(parser: &mut ArgCursor) -> Result<ResourceCommand, Cor
             file_name: parser.required_flag_value("--file-name")?,
             sha1: parser.optional_flag_value("--sha1")?,
         })),
-        other => Err(CoreError::validation(format!("unknown resource command: {other}"))),
+        other => Err(CoreError::validation(format!(
+            "unknown resource command: {other}"
+        ))),
     }
 }
 
@@ -946,11 +990,9 @@ fn parse_game_command(parser: &mut ArgCursor) -> Result<GameCommand, CoreError> 
         "sha1-file" => Ok(GameCommand::Sha1File(GameSha1FileArgs {
             path: parser.required_flag_value("--path")?,
         })),
-        "hash-resource-files" => Ok(GameCommand::HashResourceFiles(
-            GameHashResourceFilesArgs {
-                directory: parser.required_flag_value("--directory")?,
-            },
-        )),
+        "hash-resource-files" => Ok(GameCommand::HashResourceFiles(GameHashResourceFilesArgs {
+            directory: parser.required_flag_value("--directory")?,
+        })),
         "backup-create" => Ok(GameCommand::BackupCreate(GameBackupCreateArgs {
             source_root: parser.required_flag_value("--source-root")?,
             output_path: parser.required_flag_value("--output-path")?,
@@ -966,17 +1008,17 @@ fn parse_game_command(parser: &mut ArgCursor) -> Result<GameCommand, CoreError> 
         "backup-list" => Ok(GameCommand::BackupList(GameBackupListArgs {
             backup_root: parser.required_flag_value("--backup-root")?,
         })),
-        "backup-list-servers" => Ok(GameCommand::BackupListServers(
-            GameBackupListServersArgs {
-                backup_path: parser.required_flag_value("--backup-path")?,
-            },
-        )),
+        "backup-list-servers" => Ok(GameCommand::BackupListServers(GameBackupListServersArgs {
+            backup_path: parser.required_flag_value("--backup-path")?,
+        })),
         "backup-restore" => Ok(GameCommand::BackupRestore(GameBackupRestoreArgs {
             backup_path: parser.required_flag_value("--backup-path")?,
             server_name: parser.required_flag_value("--server-name")?,
             target_root: parser.required_flag_value("--target-root")?,
         })),
-        other => Err(CoreError::validation(format!("unknown game command: {other}"))),
+        other => Err(CoreError::validation(format!(
+            "unknown game command: {other}"
+        ))),
     }
 }
 
@@ -990,7 +1032,9 @@ fn parse_settings_command(parser: &mut ArgCursor) -> Result<SettingsCommand, Cor
             scope: parser.required_flag_value("--scope")?,
             json: parser.required_flag_value("--json")?,
         })),
-        other => Err(CoreError::validation(format!("unknown settings command: {other}"))),
+        other => Err(CoreError::validation(format!(
+            "unknown settings command: {other}"
+        ))),
     }
 }
 
@@ -1054,7 +1098,9 @@ impl ArgCursor {
 
     fn finish(&self) -> Result<(), CoreError> {
         if let Some(extra) = self.peek() {
-            return Err(CoreError::validation(format!("unexpected argument: {extra}")));
+            return Err(CoreError::validation(format!(
+                "unexpected argument: {extra}"
+            )));
         }
         Ok(())
     }

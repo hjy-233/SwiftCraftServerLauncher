@@ -10,20 +10,20 @@ use crate::response::{
     DownloadTargetResponse, FileHashResponse, ForgeInstallPlanResponse, GameLaunchPlanResponse,
     JavaVersionResponse, LatestLoaderResponse, LocalLogPollResponse, LocalStartPlanResponse,
     LogSnapshotResponse, PortProcessInfoResponse, RconResponse, ResourceDownloadResponse,
-    ResourceFileHashResponse, ServerCreateResponse, ServerDetailResponse,
-    ServerFileReadResponse, ServerOperationResponse, ServerSummaryResponse, VerifyJarResponse,
+    ResourceFileHashResponse, ServerCreateResponse, ServerDetailResponse, ServerFileReadResponse,
+    ServerOperationResponse, ServerSummaryResponse, VerifyJarResponse,
 };
 use scsl_core::{
-    download_file_to_path, fabric_server_jar_target, fastmirror_core_detail_url,
-    fastmirror_core_name, forge_installer_target, mirror_direct_target, sample_local_server,
     CoreError, ForgeInstallerPlanner, InMemoryRuntime, InMemoryStore, LocalServerFileEntry,
     LocalServerRuntime, LogQuery, ResourceDownloadPlanner, ResourceType, ScslCore,
     ServerDownloadPlanner, ServerInstance, ServerInventory, ServerInventoryAnalyzer,
     ServerLaunchPlanner, ServerRuntimePort, ServerStatus, ServerStorePort, ServerType,
-    SwiftDataServerStore,
+    SwiftDataServerStore, download_file_to_path, fabric_server_jar_target,
+    fastmirror_core_detail_url, fastmirror_core_name, forge_installer_target, mirror_direct_target,
+    sample_local_server,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
@@ -61,7 +61,9 @@ pub fn build_app(cli: &Cli) -> Result<CliApp, CoreError> {
             CliServerStore::SwiftData(SwiftDataServerStore::new(db_path, working_path.clone())),
             CliServerRuntime::Local(LocalServerRuntime::new(working_path.clone())),
         ),
-        inventory_analyzer: ServerInventoryAnalyzer::new(PathBuf::from(&working_path).join("servers")),
+        inventory_analyzer: ServerInventoryAnalyzer::new(
+            PathBuf::from(&working_path).join("servers"),
+        ),
         download_planner: ServerDownloadPlanner::new(&working_path),
         resource_download_planner: ResourceDownloadPlanner::new(&working_path),
         forge_installer: ForgeInstallerPlanner::new(&working_path),
@@ -83,7 +85,9 @@ pub fn run_command(app: &CliApp, command: Command) -> Result<Value, CoreError> {
 fn run_game_command(command: GameCommand) -> Result<Value, CoreError> {
     match command {
         GameCommand::LaunchPlan(args) => Ok(json!(build_game_launch_plan(&args.json)?)),
-        GameCommand::MavenRelativePath(args) => Ok(json!(maven_coordinate_to_relative_path_for_url(&args.coordinate))),
+        GameCommand::MavenRelativePath(args) => Ok(json!(
+            maven_coordinate_to_relative_path_for_url(&args.coordinate)
+        )),
         GameCommand::MavenPath(args) => Ok(json!(maven_coordinate_to_full_path(
             &args.coordinate,
             &args.libraries_dir,
@@ -93,10 +97,9 @@ fn run_game_command(command: GameCommand) -> Result<Value, CoreError> {
             &args.libraries_dir,
             args.include_in_classpath_only,
         )?)),
-        GameCommand::ProcessLoaderPlaceholders(args) => Ok(process_loader_placeholders(
-            &args.json,
-            &args.game_version,
-        )?),
+        GameCommand::ProcessLoaderPlaceholders(args) => {
+            Ok(process_loader_placeholders(&args.json, &args.game_version)?)
+        }
         GameCommand::ExecuteProcessor(args) => {
             execute_loader_processor(&args.json)?;
             Ok(json!(AckResponse { ok: true }))
@@ -130,9 +133,9 @@ fn run_game_command(command: GameCommand) -> Result<Value, CoreError> {
         GameCommand::Sha1File(args) => Ok(json!(FileHashResponse {
             sha1: compute_sha1_file(Path::new(&args.path))?,
         })),
-        GameCommand::HashResourceFiles(args) => Ok(json!(hash_resource_files(Path::new(
-            &args.directory,
-        ))?)),
+        GameCommand::HashResourceFiles(args) => {
+            Ok(json!(hash_resource_files(Path::new(&args.directory,))?))
+        }
         GameCommand::BackupCreate(args) => {
             create_backup_archive(
                 Path::new(&args.source_root),
@@ -143,12 +146,12 @@ fn run_game_command(command: GameCommand) -> Result<Value, CoreError> {
                 path: args.output_path,
             }))
         }
-        GameCommand::BackupList(args) => Ok(json!(list_backup_archives(Path::new(
-            &args.backup_root,
-        ))?)),
-        GameCommand::BackupListServers(args) => Ok(json!(list_backup_servers(Path::new(
-            &args.backup_path,
-        ))?)),
+        GameCommand::BackupList(args) => {
+            Ok(json!(list_backup_archives(Path::new(&args.backup_root,))?))
+        }
+        GameCommand::BackupListServers(args) => {
+            Ok(json!(list_backup_servers(Path::new(&args.backup_path,))?))
+        }
         GameCommand::BackupRestore(args) => Ok(json!(restore_backup_server(
             Path::new(&args.backup_path),
             &args.server_name,
@@ -162,43 +165,60 @@ fn run_settings_command(command: SettingsCommand) -> Result<Value, CoreError> {
         SettingsCommand::Read(args) => {
             let settings = read_cli_settings().unwrap_or_default();
             match args.scope.trim().to_ascii_lowercase().as_str() {
-                "general" => serde_json::to_value(settings.general)
-                    .map_err(|error| CoreError::runtime(format!("failed to encode general settings: {error}"))),
-                "game" => serde_json::to_value(settings.game)
-                    .map_err(|error| CoreError::runtime(format!("failed to encode game settings: {error}"))),
-                "theme" => serde_json::to_value(settings.theme)
-                    .map_err(|error| CoreError::runtime(format!("failed to encode theme settings: {error}"))),
-                "ai" => serde_json::to_value(settings.ai)
-                    .map_err(|error| CoreError::runtime(format!("failed to encode ai settings: {error}"))),
-                "mirror" => serde_json::to_value(settings.mirror_sources)
-                    .map_err(|error| CoreError::runtime(format!("failed to encode mirror settings: {error}"))),
-                other => Err(CoreError::validation(format!("unknown settings scope: {other}"))),
+                "general" => serde_json::to_value(settings.general).map_err(|error| {
+                    CoreError::runtime(format!("failed to encode general settings: {error}"))
+                }),
+                "game" => serde_json::to_value(settings.game).map_err(|error| {
+                    CoreError::runtime(format!("failed to encode game settings: {error}"))
+                }),
+                "theme" => serde_json::to_value(settings.theme).map_err(|error| {
+                    CoreError::runtime(format!("failed to encode theme settings: {error}"))
+                }),
+                "ai" => serde_json::to_value(settings.ai).map_err(|error| {
+                    CoreError::runtime(format!("failed to encode ai settings: {error}"))
+                }),
+                "mirror" => serde_json::to_value(settings.mirror_sources).map_err(|error| {
+                    CoreError::runtime(format!("failed to encode mirror settings: {error}"))
+                }),
+                other => Err(CoreError::validation(format!(
+                    "unknown settings scope: {other}"
+                ))),
             }
         }
         SettingsCommand::Write(args) => {
             let mut settings = read_cli_settings().unwrap_or_default();
             match args.scope.trim().to_ascii_lowercase().as_str() {
                 "general" => {
-                    settings.general = serde_json::from_str(&args.json)
-                        .map_err(|error| CoreError::validation(format!("invalid general settings json: {error}")))?;
+                    settings.general = serde_json::from_str(&args.json).map_err(|error| {
+                        CoreError::validation(format!("invalid general settings json: {error}"))
+                    })?;
                 }
                 "game" => {
-                    settings.game = serde_json::from_str(&args.json)
-                        .map_err(|error| CoreError::validation(format!("invalid game settings json: {error}")))?;
+                    settings.game = serde_json::from_str(&args.json).map_err(|error| {
+                        CoreError::validation(format!("invalid game settings json: {error}"))
+                    })?;
                 }
                 "theme" => {
-                    settings.theme = serde_json::from_str(&args.json)
-                        .map_err(|error| CoreError::validation(format!("invalid theme settings json: {error}")))?;
+                    settings.theme = serde_json::from_str(&args.json).map_err(|error| {
+                        CoreError::validation(format!("invalid theme settings json: {error}"))
+                    })?;
                 }
                 "ai" => {
-                    settings.ai = serde_json::from_str(&args.json)
-                        .map_err(|error| CoreError::validation(format!("invalid ai settings json: {error}")))?;
+                    settings.ai = serde_json::from_str(&args.json).map_err(|error| {
+                        CoreError::validation(format!("invalid ai settings json: {error}"))
+                    })?;
                 }
                 "mirror" => {
-                    settings.mirror_sources = serde_json::from_str(&args.json)
-                        .map_err(|error| CoreError::validation(format!("invalid mirror settings json: {error}")))?;
+                    settings.mirror_sources =
+                        serde_json::from_str(&args.json).map_err(|error| {
+                            CoreError::validation(format!("invalid mirror settings json: {error}"))
+                        })?;
                 }
-                other => return Err(CoreError::validation(format!("unknown settings scope: {other}"))),
+                other => {
+                    return Err(CoreError::validation(format!(
+                        "unknown settings scope: {other}"
+                    )));
+                }
             }
             write_cli_settings(&settings)?;
             Ok(json!(AckResponse { ok: true }))
@@ -339,7 +359,9 @@ struct ServerCreateRequest {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ServerCreateSource {
-    CustomJar { source_path: String },
+    CustomJar {
+        source_path: String,
+    },
     Download {
         url: String,
         file_name: String,
@@ -474,8 +496,9 @@ fn run_server_properties_command(
     match command {
         ServerPropertiesCommand::Read(args) => Ok(json!(app.read_server_properties(&args.id)?)),
         ServerPropertiesCommand::Write(args) => {
-            let payload: Value = serde_json::from_str(&args.json)
-                .map_err(|error| CoreError::validation(format!("invalid properties json: {error}")))?;
+            let payload: Value = serde_json::from_str(&args.json).map_err(|error| {
+                CoreError::validation(format!("invalid properties json: {error}"))
+            })?;
             let object = payload
                 .as_object()
                 .ok_or_else(|| CoreError::validation("properties json must be an object"))?;
@@ -542,7 +565,9 @@ fn run_server_schedules_command(
     match command {
         ServerSchedulesCommand::Read(args) => {
             let schedules: Value = serde_json::from_str(&app.read_schedules_json(&args.id)?)
-                .map_err(|error| CoreError::runtime(format!("failed to decode schedules: {error}")))?;
+                .map_err(|error| {
+                    CoreError::runtime(format!("failed to decode schedules: {error}"))
+                })?;
             Ok(schedules)
         }
         ServerSchedulesCommand::Write(args) => {
@@ -567,8 +592,9 @@ fn run_server_players_command(
                 Err(CoreError::NotFound { .. }) => "[]".to_string(),
                 Err(error) => return Err(error),
             };
-            let players: Value = serde_json::from_str(&content)
-                .map_err(|error| CoreError::runtime(format!("failed to decode player list json: {error}")))?;
+            let players: Value = serde_json::from_str(&content).map_err(|error| {
+                CoreError::runtime(format!("failed to decode player list json: {error}"))
+            })?;
             Ok(players)
         }
         ServerPlayersCommand::Write(args) => {
@@ -576,10 +602,12 @@ fn run_server_players_command(
             std::io::stdin()
                 .read_to_string(&mut players)
                 .map_err(|error| CoreError::runtime(format!("failed to read stdin: {error}")))?;
-            let validated: Value = serde_json::from_str(&players)
-                .map_err(|error| CoreError::validation(format!("invalid player list json: {error}")))?;
-            let content = serde_json::to_string_pretty(&validated)
-                .map_err(|error| CoreError::runtime(format!("failed to encode player list json: {error}")))?;
+            let validated: Value = serde_json::from_str(&players).map_err(|error| {
+                CoreError::validation(format!("invalid player list json: {error}"))
+            })?;
+            let content = serde_json::to_string_pretty(&validated).map_err(|error| {
+                CoreError::runtime(format!("failed to encode player list json: {error}"))
+            })?;
             app.write_server_file_text(&args.id, &args.file_name, &(content + "\n"))?;
             Ok(json!(AckResponse { ok: true }))
         }
@@ -610,9 +638,9 @@ fn run_resource_command(app: &CliApp, command: ResourceCommand) -> Result<Value,
 
 fn run_mirror_command(command: MirrorCommand) -> Result<Value, CoreError> {
     match command {
-        MirrorCommand::FastMirrorCores(args) => Ok(json!(fetch_fastmirror_cores(
-            args.base_url.as_deref()
-        )?)),
+        MirrorCommand::FastMirrorCores(args) => {
+            Ok(json!(fetch_fastmirror_cores(args.base_url.as_deref())?))
+        }
         MirrorCommand::FastMirrorGameVersions(args) => Ok(json!(fetch_fastmirror_game_versions(
             &args.core_name,
             args.base_url.as_deref()
@@ -825,7 +853,10 @@ impl CliApp {
         execute_rcon_command("127.0.0.1", port, &password, command)
     }
 
-    fn local_start_plan(&self, args: ServerJavaPathArgs) -> Result<LocalStartPlanResponse, CoreError> {
+    fn local_start_plan(
+        &self,
+        args: ServerJavaPathArgs,
+    ) -> Result<LocalStartPlanResponse, CoreError> {
         let mut server = self.require_inventory_server(&args.id)?;
         if !server.is_local() {
             return Err(CoreError::unsupported(
@@ -887,9 +918,13 @@ impl CliApp {
         self.write_server_properties(&server.id, &properties)
     }
 
-    fn create_local_server(&self, args: ServerCreateArgs) -> Result<ServerCreateResponse, CoreError> {
-        let request: ServerCreateRequest = serde_json::from_str(&args.json)
-            .map_err(|error| CoreError::validation(format!("invalid server create json: {error}")))?;
+    fn create_local_server(
+        &self,
+        args: ServerCreateArgs,
+    ) -> Result<ServerCreateResponse, CoreError> {
+        let request: ServerCreateRequest = serde_json::from_str(&args.json).map_err(|error| {
+            CoreError::validation(format!("invalid server create json: {error}"))
+        })?;
         let server = self.server_from_create_request(&request)?;
         let server_dir = self.download_planner.server_dir(&server);
         if server_dir.exists() {
@@ -899,8 +934,9 @@ impl CliApp {
             )));
         }
 
-        fs::create_dir_all(&server_dir)
-            .map_err(|error| CoreError::runtime(format!("failed to create server directory: {error}")))?;
+        fs::create_dir_all(&server_dir).map_err(|error| {
+            CoreError::runtime(format!("failed to create server directory: {error}"))
+        })?;
 
         let result = (|| -> Result<ServerCreateResponse, CoreError> {
             let server_jar = match &request.source {
@@ -914,7 +950,8 @@ impl CliApp {
                 } => {
                     let target = mirror_direct_target(file_name.clone(), url.clone())?;
                     let destination = server_dir.join(&target.file_name);
-                    let downloaded = download_file_to_path(&target.url, &destination, sha1.as_deref())?;
+                    let downloaded =
+                        download_file_to_path(&target.url, &destination, sha1.as_deref())?;
                     self.materialize_server_artifact(&downloaded, &server_dir)?
                 }
             };
@@ -948,8 +985,10 @@ impl CliApp {
         &self,
         args: ServerResolveDownloadArgs,
     ) -> Result<scsl_core::DownloadTarget, CoreError> {
-        let request: ServerDownloadTargetRequest = serde_json::from_str(&args.json)
-            .map_err(|error| CoreError::validation(format!("invalid download target json: {error}")))?;
+        let request: ServerDownloadTargetRequest =
+            serde_json::from_str(&args.json).map_err(|error| {
+                CoreError::validation(format!("invalid download target json: {error}"))
+            })?;
         let mirror_source = request.mirror_source.trim().to_ascii_lowercase();
         match mirror_source.as_str() {
             "fastmirror" => self.resolve_fastmirror_target(
@@ -968,17 +1007,27 @@ impl CliApp {
                 &request.game_version,
                 &request.loader_version,
             ),
-            other => Err(CoreError::validation(format!("unsupported mirror source: {other}"))),
+            other => Err(CoreError::validation(format!(
+                "unsupported mirror source: {other}"
+            ))),
         }
     }
 
-    fn resolve_java_version(&self, game_version: &str) -> Result<scsl_core::JavaVersion, CoreError> {
-        let manifest: MojangVersionManifest = fetch_json("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", &[])?;
+    fn resolve_java_version(
+        &self,
+        game_version: &str,
+    ) -> Result<scsl_core::JavaVersion, CoreError> {
+        let manifest: MojangVersionManifest = fetch_json(
+            "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+            &[],
+        )?;
         let version_info = manifest
             .versions
             .into_iter()
             .find(|item| item.id == game_version)
-            .ok_or_else(|| CoreError::runtime(format!("minecraft version not found: {game_version}")))?;
+            .ok_or_else(|| {
+                CoreError::runtime(format!("minecraft version not found: {game_version}"))
+            })?;
         let version_manifest: MinecraftVersionManifest = fetch_json(&version_info.url, &[])?;
         Ok(scsl_core::JavaVersion {
             component: version_manifest.java_version.component,
@@ -986,7 +1035,11 @@ impl CliApp {
         })
     }
 
-    fn resolve_latest_loader(&self, server_type: &str, game_version: &str) -> Result<String, CoreError> {
+    fn resolve_latest_loader(
+        &self,
+        server_type: &str,
+        game_version: &str,
+    ) -> Result<String, CoreError> {
         match server_type.trim().to_ascii_lowercase().as_str() {
             "fabric" => {
                 let loaders: Vec<FabricLoaderEntry> = fetch_json(
@@ -998,7 +1051,9 @@ impl CliApp {
                     .find(|item| item.loader.stable)
                     .or_else(|| loaders.first())
                     .map(|item| item.loader.version.clone())
-                    .ok_or_else(|| CoreError::runtime("fabric loader version not found".to_string()))
+                    .ok_or_else(|| {
+                        CoreError::runtime("fabric loader version not found".to_string())
+                    })
             }
             "forge" => {
                 let promotions: ForgePromotions = fetch_json(
@@ -1009,7 +1064,12 @@ impl CliApp {
                     .promos
                     .get(&format!("{game_version}-recommended"))
                     .cloned()
-                    .or_else(|| promotions.promos.get(&format!("{game_version}-latest")).cloned())
+                    .or_else(|| {
+                        promotions
+                            .promos
+                            .get(&format!("{game_version}-latest"))
+                            .cloned()
+                    })
                     .ok_or_else(|| CoreError::runtime("forge loader version not found".to_string()))
             }
             other => Err(CoreError::validation(format!(
@@ -1086,7 +1146,10 @@ impl CliApp {
         match args.server_type.trim().to_ascii_lowercase().as_str() {
             "fabric" => {
                 let entries: Vec<FabricLoaderEntry> = fetch_json(
-                    &format!("https://meta.fabricmc.net/v2/versions/loader/{}", args.game_version),
+                    &format!(
+                        "https://meta.fabricmc.net/v2/versions/loader/{}",
+                        args.game_version
+                    ),
                     &[],
                 )?;
                 Ok(entries
@@ -1109,7 +1172,11 @@ impl CliApp {
                             args.game_version
                         ))
                     })?;
-                Ok(game_version.loaders.into_iter().map(|loader| loader.id).collect())
+                Ok(game_version
+                    .loaders
+                    .into_iter()
+                    .map(|loader| loader.id)
+                    .collect())
             }
             other => Err(CoreError::validation(format!(
                 "loader versions are unsupported for server type: {other}"
@@ -1128,7 +1195,9 @@ impl CliApp {
             ServerType::Paper => self.resolve_paper_target(game_version),
             ServerType::Fabric => self.resolve_fabric_target(game_version, loader_version),
             ServerType::Forge => self.resolve_forge_target(game_version, loader_version),
-            ServerType::Custom => Err(CoreError::validation("custom jar does not have a download target")),
+            ServerType::Custom => Err(CoreError::validation(
+                "custom jar does not have a download target",
+            )),
         }
     }
 
@@ -1141,7 +1210,9 @@ impl CliApp {
         base_url: Option<&str>,
     ) -> Result<scsl_core::DownloadTarget, CoreError> {
         if matches!(server_type, ServerType::Custom) {
-            return Err(CoreError::validation("custom jar does not have a download target"));
+            return Err(CoreError::validation(
+                "custom jar does not have a download target",
+            ));
         }
         if loader_version.trim().is_empty() {
             return Err(CoreError::validation("loader version cannot be empty"));
@@ -1161,13 +1232,21 @@ impl CliApp {
         })
     }
 
-    fn resolve_vanilla_target(&self, game_version: &str) -> Result<scsl_core::DownloadTarget, CoreError> {
-        let manifest: MojangVersionManifest = fetch_json("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", &[])?;
+    fn resolve_vanilla_target(
+        &self,
+        game_version: &str,
+    ) -> Result<scsl_core::DownloadTarget, CoreError> {
+        let manifest: MojangVersionManifest = fetch_json(
+            "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+            &[],
+        )?;
         let version_info = manifest
             .versions
             .into_iter()
             .find(|item| item.id == game_version)
-            .ok_or_else(|| CoreError::runtime(format!("minecraft version not found: {game_version}")))?;
+            .ok_or_else(|| {
+                CoreError::runtime(format!("minecraft version not found: {game_version}"))
+            })?;
         let version_manifest: MinecraftVersionManifest = fetch_json(&version_info.url, &[])?;
         let server_download = version_manifest
             .downloads
@@ -1181,7 +1260,10 @@ impl CliApp {
         })
     }
 
-    fn resolve_paper_target(&self, game_version: &str) -> Result<scsl_core::DownloadTarget, CoreError> {
+    fn resolve_paper_target(
+        &self,
+        game_version: &str,
+    ) -> Result<scsl_core::DownloadTarget, CoreError> {
         let builds: Vec<PaperBuildWire> = fetch_json(
             &format!("https://fill.papermc.io/v3/projects/paper/versions/{game_version}/builds"),
             &[("User-Agent", "SwiftCraftServerLauncher/1.0")],
@@ -1196,7 +1278,10 @@ impl CliApp {
             .cloned()
             .ok_or_else(|| CoreError::runtime("paper server download not found".to_string()))?;
         let mut headers = BTreeMap::new();
-        headers.insert("User-Agent".to_string(), "SwiftCraftServerLauncher/1.0".to_string());
+        headers.insert(
+            "User-Agent".to_string(),
+            "SwiftCraftServerLauncher/1.0".to_string(),
+        );
         Ok(scsl_core::DownloadTarget {
             url: download.url,
             sha1: None,
@@ -1238,12 +1323,17 @@ impl CliApp {
         forge_installer_target(game_version, &selected_loader)
     }
 
-    fn server_from_create_request(&self, request: &ServerCreateRequest) -> Result<ServerInstance, CoreError> {
+    fn server_from_create_request(
+        &self,
+        request: &ServerCreateRequest,
+    ) -> Result<ServerInstance, CoreError> {
         if request.id.trim().is_empty()
             || request.name.trim().is_empty()
             || request.directory_name.trim().is_empty()
         {
-            return Err(CoreError::validation("server create request is missing required fields"));
+            return Err(CoreError::validation(
+                "server create request is missing required fields",
+            ));
         }
 
         let initial_jar = match &request.source {
@@ -1308,7 +1398,9 @@ impl CliApp {
         Ok(downloaded_path
             .file_name()
             .and_then(|value| value.to_str())
-            .ok_or_else(|| CoreError::runtime("downloaded artifact does not have a file name".to_string()))?
+            .ok_or_else(|| {
+                CoreError::runtime("downloaded artifact does not have a file name".to_string())
+            })?
             .to_string())
     }
 
@@ -1352,7 +1444,9 @@ impl CliApp {
             CliServerRuntime::Demo(_) => Err(CoreError::unsupported(
                 "demo runtime does not support server.properties",
             )),
-            CliServerRuntime::Local(runtime) => runtime.write_server_properties(&server, properties),
+            CliServerRuntime::Local(runtime) => {
+                runtime.write_server_properties(&server, properties)
+            }
         }
     }
 
@@ -1384,7 +1478,9 @@ impl CliApp {
             CliServerRuntime::Demo(_) => Err(CoreError::unsupported(
                 "demo runtime does not support server files",
             )),
-            CliServerRuntime::Local(runtime) => runtime.read_server_file_text(&server, relative_path),
+            CliServerRuntime::Local(runtime) => {
+                runtime.read_server_file_text(&server, relative_path)
+            }
         }
     }
 
@@ -1423,7 +1519,9 @@ impl CliApp {
             CliServerRuntime::Demo(_) => Err(CoreError::unsupported(
                 "demo runtime does not support server files",
             )),
-            CliServerRuntime::Local(runtime) => runtime.create_server_directory(&server, relative_path),
+            CliServerRuntime::Local(runtime) => {
+                runtime.create_server_directory(&server, relative_path)
+            }
         }
     }
 
@@ -1492,7 +1590,9 @@ impl CliApp {
             CliServerRuntime::Demo(_) => Err(CoreError::unsupported(
                 "demo runtime does not support server files",
             )),
-            CliServerRuntime::Local(runtime) => runtime.import_server_path(&server, source, directory),
+            CliServerRuntime::Local(runtime) => {
+                runtime.import_server_path(&server, source, directory)
+            }
         }
     }
 
@@ -1524,7 +1624,9 @@ impl CliApp {
             CliServerRuntime::Demo(_) => Err(CoreError::unsupported(
                 "demo runtime does not support schedules",
             )),
-            CliServerRuntime::Local(runtime) => runtime.write_schedules_json(&server, schedules_json),
+            CliServerRuntime::Local(runtime) => {
+                runtime.write_schedules_json(&server, schedules_json)
+            }
         }
     }
 
@@ -1604,7 +1706,11 @@ impl ServerRuntimePort for CliServerRuntime {
         }
     }
 
-    fn logs(&self, server: &ServerInstance, query: LogQuery) -> Result<scsl_core::LogSnapshot, CoreError> {
+    fn logs(
+        &self,
+        server: &ServerInstance,
+        query: LogQuery,
+    ) -> Result<scsl_core::LogSnapshot, CoreError> {
         match self {
             Self::Demo(runtime) => runtime.logs(server, query),
             Self::Local(runtime) => runtime.logs(server, query),
@@ -1884,16 +1990,19 @@ fn unzip_server_archive(archive_path: &Path, destination: &Path) -> Result<(), C
         };
         let output_path = destination.join(name);
         if entry.is_dir() {
-            fs::create_dir_all(&output_path)
-                .map_err(|error| CoreError::runtime(format!("failed to create extracted directory: {error}")))?;
+            fs::create_dir_all(&output_path).map_err(|error| {
+                CoreError::runtime(format!("failed to create extracted directory: {error}"))
+            })?;
             continue;
         }
         if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| CoreError::runtime(format!("failed to create extracted parent: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                CoreError::runtime(format!("failed to create extracted parent: {error}"))
+            })?;
         }
-        let mut output = File::create(&output_path)
-            .map_err(|error| CoreError::runtime(format!("failed to create extracted file: {error}")))?;
+        let mut output = File::create(&output_path).map_err(|error| {
+            CoreError::runtime(format!("failed to create extracted file: {error}"))
+        })?;
         std::io::copy(&mut entry, &mut output)
             .map_err(|error| CoreError::runtime(format!("failed to extract zip entry: {error}")))?;
     }
@@ -1909,15 +2018,16 @@ fn find_first_server_jar(directory: &Path) -> Option<String> {
 }
 
 fn collect_jars(root: &Path, current: &Path, jars: &mut Vec<String>) -> Result<(), CoreError> {
-    for entry in fs::read_dir(current)
-        .map_err(|error| CoreError::runtime(format!("failed to read extracted directory: {error}")))? 
-    {
-        let entry = entry
-            .map_err(|error| CoreError::runtime(format!("failed to inspect extracted entry: {error}")))?;
+    for entry in fs::read_dir(current).map_err(|error| {
+        CoreError::runtime(format!("failed to read extracted directory: {error}"))
+    })? {
+        let entry = entry.map_err(|error| {
+            CoreError::runtime(format!("failed to inspect extracted entry: {error}"))
+        })?;
         let path = entry.path();
-        let metadata = entry
-            .metadata()
-            .map_err(|error| CoreError::runtime(format!("failed to inspect extracted metadata: {error}")))?;
+        let metadata = entry.metadata().map_err(|error| {
+            CoreError::runtime(format!("failed to inspect extracted metadata: {error}"))
+        })?;
         if metadata.is_dir() {
             collect_jars(root, &path, jars)?;
             continue;
@@ -1984,7 +2094,9 @@ fn fetch_json_value(url: &str, headers: &[(&str, &str)]) -> Result<Value, CoreEr
         .map_err(|error| CoreError::runtime(format!("failed to decode json from {url}: {error}")))
 }
 
-fn fetch_fastmirror_cores(base_url: Option<&str>) -> Result<Vec<FastMirrorCoreSummaryWire>, CoreError> {
+fn fetch_fastmirror_cores(
+    base_url: Option<&str>,
+) -> Result<Vec<FastMirrorCoreSummaryWire>, CoreError> {
     let url = scsl_core::normalize_fastmirror_base_url(base_url);
     let payload: Value = fetch_json_value(&url, &[("Accept", "application/json")])?;
     decode_wrapped_or_direct(payload)
@@ -2019,7 +2131,11 @@ fn fetch_fastmirror_core_versions(
     let payload: Value = fetch_json_value(&url, &[("Accept", "application/json")])?;
     let builds: FastMirrorBuildListWire = decode_wrapped_or_direct(payload)?;
     Ok(scsl_core::unique_strings(
-        builds.builds.into_iter().map(|item| item.core_version).collect::<Vec<_>>(),
+        builds
+            .builds
+            .into_iter()
+            .map(|item| item.core_version)
+            .collect::<Vec<_>>(),
     ))
 }
 
@@ -2029,7 +2145,12 @@ fn fetch_fastmirror_detail(
     core_version: &str,
     base_url: Option<&str>,
 ) -> Result<FastMirrorCoreDetailWire, CoreError> {
-    let url = fastmirror_core_detail_url(base_url, core_name.trim(), game_version.trim(), core_version.trim());
+    let url = fastmirror_core_detail_url(
+        base_url,
+        core_name.trim(),
+        game_version.trim(),
+        core_version.trim(),
+    );
     let payload: Value = fetch_json_value(&url, &[("Accept", "application/json")])?;
     decode_wrapped_or_direct(payload)
 }
@@ -2051,15 +2172,22 @@ fn fetch_polars_core_items(
     Ok(items)
 }
 
-fn fetch_custom_cores(args: MirrorCustomConfigArgs) -> Result<Vec<FastMirrorCoreSummaryWire>, CoreError> {
-    let config: MirrorCustomAPIConfigWire = serde_json::from_str(&args.config_json)
-        .map_err(|error| CoreError::validation(format!("invalid custom mirror config json: {error}")))?;
+fn fetch_custom_cores(
+    args: MirrorCustomConfigArgs,
+) -> Result<Vec<FastMirrorCoreSummaryWire>, CoreError> {
+    let config: MirrorCustomAPIConfigWire =
+        serde_json::from_str(&args.config_json).map_err(|error| {
+            CoreError::validation(format!("invalid custom mirror config json: {error}"))
+        })?;
     let url = custom_url(&args.base_url, &config.core_list_path, "", "", "")?;
-    let root = custom_root(fetch_json_value(&url, &[("Accept", "application/json")])?, &config);
+    let root = custom_root(
+        fetch_json_value(&url, &[("Accept", "application/json")])?,
+        &config,
+    );
     let cores = custom_resolve_value(&root, &config.cores_key_path).unwrap_or(root);
-    let array = cores
-        .as_array()
-        .ok_or_else(|| CoreError::runtime("custom mirror cores payload is not an array".to_string()))?;
+    let array = cores.as_array().ok_or_else(|| {
+        CoreError::runtime("custom mirror cores payload is not an array".to_string())
+    })?;
     Ok(array
         .iter()
         .filter_map(|item| item.as_object())
@@ -2081,18 +2209,32 @@ fn fetch_custom_cores(args: MirrorCustomConfigArgs) -> Result<Vec<FastMirrorCore
 }
 
 fn fetch_custom_game_versions(args: MirrorCustomCoreArgs) -> Result<Vec<String>, CoreError> {
-    let config: MirrorCustomAPIConfigWire = serde_json::from_str(&args.config_json)
-        .map_err(|error| CoreError::validation(format!("invalid custom mirror config json: {error}")))?;
-    let url = custom_url(&args.base_url, &config.core_detail_path, &args.core_name, "", "")?;
-    let root = custom_root(fetch_json_value(&url, &[("Accept", "application/json")])?, &config);
-    let versions = custom_resolve_value(&root, &config.versions_key_path)
-        .ok_or_else(|| CoreError::runtime("custom mirror versions payload is missing".to_string()))?;
+    let config: MirrorCustomAPIConfigWire =
+        serde_json::from_str(&args.config_json).map_err(|error| {
+            CoreError::validation(format!("invalid custom mirror config json: {error}"))
+        })?;
+    let url = custom_url(
+        &args.base_url,
+        &config.core_detail_path,
+        &args.core_name,
+        "",
+        "",
+    )?;
+    let root = custom_root(
+        fetch_json_value(&url, &[("Accept", "application/json")])?,
+        &config,
+    );
+    let versions = custom_resolve_value(&root, &config.versions_key_path).ok_or_else(|| {
+        CoreError::runtime("custom mirror versions payload is missing".to_string())
+    })?;
     custom_string_array(&versions)
 }
 
 fn fetch_custom_core_versions(args: MirrorCustomCoreGameArgs) -> Result<Vec<String>, CoreError> {
-    let config: MirrorCustomAPIConfigWire = serde_json::from_str(&args.config_json)
-        .map_err(|error| CoreError::validation(format!("invalid custom mirror config json: {error}")))?;
+    let config: MirrorCustomAPIConfigWire =
+        serde_json::from_str(&args.config_json).map_err(|error| {
+            CoreError::validation(format!("invalid custom mirror config json: {error}"))
+        })?;
     let url = custom_url(
         &args.base_url,
         &config.core_builds_path,
@@ -2100,12 +2242,15 @@ fn fetch_custom_core_versions(args: MirrorCustomCoreGameArgs) -> Result<Vec<Stri
         &args.game_version,
         "",
     )?;
-    let root = custom_root(fetch_json_value(&url, &[("Accept", "application/json")])?, &config);
+    let root = custom_root(
+        fetch_json_value(&url, &[("Accept", "application/json")])?,
+        &config,
+    );
     let builds = custom_resolve_value(&root, &config.builds_key_path)
         .ok_or_else(|| CoreError::runtime("custom mirror builds payload is missing".to_string()))?;
-    let array = builds
-        .as_array()
-        .ok_or_else(|| CoreError::runtime("custom mirror builds payload is not an array".to_string()))?;
+    let array = builds.as_array().ok_or_else(|| {
+        CoreError::runtime("custom mirror builds payload is not an array".to_string())
+    })?;
     Ok(scsl_core::unique_strings(
         array
             .iter()
@@ -2116,9 +2261,13 @@ fn fetch_custom_core_versions(args: MirrorCustomCoreGameArgs) -> Result<Vec<Stri
     ))
 }
 
-fn fetch_custom_detail(args: MirrorCustomDetailArgs) -> Result<FastMirrorCoreDetailWire, CoreError> {
-    let config: MirrorCustomAPIConfigWire = serde_json::from_str(&args.config_json)
-        .map_err(|error| CoreError::validation(format!("invalid custom mirror config json: {error}")))?;
+fn fetch_custom_detail(
+    args: MirrorCustomDetailArgs,
+) -> Result<FastMirrorCoreDetailWire, CoreError> {
+    let config: MirrorCustomAPIConfigWire =
+        serde_json::from_str(&args.config_json).map_err(|error| {
+            CoreError::validation(format!("invalid custom mirror config json: {error}"))
+        })?;
     let url = custom_url(
         &args.base_url,
         &config.core_build_detail_path,
@@ -2126,10 +2275,13 @@ fn fetch_custom_detail(args: MirrorCustomDetailArgs) -> Result<FastMirrorCoreDet
         &args.game_version,
         &args.core_version,
     )?;
-    let root = custom_root(fetch_json_value(&url, &[("Accept", "application/json")])?, &config);
-    let dict = root
-        .as_object()
-        .ok_or_else(|| CoreError::runtime("custom mirror detail payload is not an object".to_string()))?;
+    let root = custom_root(
+        fetch_json_value(&url, &[("Accept", "application/json")])?,
+        &config,
+    );
+    let dict = root.as_object().ok_or_else(|| {
+        CoreError::runtime("custom mirror detail payload is not an object".to_string())
+    })?;
     let download_url = custom_string(dict, &config.build_download_url_key);
     let filename = custom_string(dict, &config.build_file_name_key);
     if download_url.is_empty() || filename.is_empty() {
@@ -2149,7 +2301,9 @@ fn decode_wrapped_or_direct<T: for<'de> Deserialize<'de>>(payload: Value) -> Res
     if let Some(data) = payload.get("data") {
         serde_json::from_value(data.clone())
             .or_else(|_| serde_json::from_value(payload))
-            .map_err(|error| CoreError::runtime(format!("failed to decode wrapped payload: {error}")))
+            .map_err(|error| {
+                CoreError::runtime(format!("failed to decode wrapped payload: {error}"))
+            })
     } else {
         serde_json::from_value(payload)
             .map_err(|error| CoreError::runtime(format!("failed to decode payload: {error}")))
@@ -2210,9 +2364,9 @@ fn custom_bool(dict: &serde_json::Map<String, Value>, key: &str) -> BoolLike {
 type BoolLike = bool;
 
 fn custom_string_array(value: &Value) -> Result<Vec<String>, CoreError> {
-    let array = value
-        .as_array()
-        .ok_or_else(|| CoreError::runtime("custom mirror versions payload is not an array".to_string()))?;
+    let array = value.as_array().ok_or_else(|| {
+        CoreError::runtime("custom mirror versions payload is not an array".to_string())
+    })?;
     Ok(array
         .iter()
         .filter_map(|item| match item {
@@ -2265,10 +2419,14 @@ fn fetch_modrinth_versions_filter(
     selected_versions_json: &str,
     selected_loaders_json: &str,
 ) -> Result<Value, CoreError> {
-    let selected_versions: Vec<String> = serde_json::from_str(selected_versions_json)
-        .map_err(|error| CoreError::validation(format!("invalid selected versions json: {error}")))?;
-    let selected_loaders: Vec<String> = serde_json::from_str(selected_loaders_json)
-        .map_err(|error| CoreError::validation(format!("invalid selected loaders json: {error}")))?;
+    let selected_versions: Vec<String> =
+        serde_json::from_str(selected_versions_json).map_err(|error| {
+            CoreError::validation(format!("invalid selected versions json: {error}"))
+        })?;
+    let selected_loaders: Vec<String> =
+        serde_json::from_str(selected_loaders_json).map_err(|error| {
+            CoreError::validation(format!("invalid selected loaders json: {error}"))
+        })?;
     let payload = fetch_json_value(
         &format!("https://api.modrinth.com/v2/project/{id}/version"),
         &[("Accept", "application/json")],
@@ -2278,7 +2436,9 @@ fn fetch_modrinth_versions_filter(
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .filter(|version| modrinth_version_matches(version, &selected_versions, &selected_loaders, type_name))
+        .filter(|version| {
+            modrinth_version_matches(version, &selected_versions, &selected_loaders, type_name)
+        })
         .collect::<Vec<_>>();
     Ok(Value::Array(versions))
 }
@@ -2289,17 +2449,26 @@ fn fetch_modrinth_dependencies(
     selected_versions_json: &str,
     selected_loaders_json: &str,
 ) -> Result<Value, CoreError> {
-    let filtered = fetch_modrinth_versions_filter(id, type_name, selected_versions_json, selected_loaders_json)?;
+    let filtered = fetch_modrinth_versions_filter(
+        id,
+        type_name,
+        selected_versions_json,
+        selected_loaders_json,
+    )?;
     let Some(first_version) = filtered.as_array().and_then(|items| items.first()).cloned() else {
         return Ok(json!({ "projects": [] }));
     };
     let Some(dependencies) = first_version.get("dependencies").and_then(Value::as_array) else {
         return Ok(json!({ "projects": [] }));
     };
-    let selected_versions: Vec<String> = serde_json::from_str(selected_versions_json)
-        .map_err(|error| CoreError::validation(format!("invalid selected versions json: {error}")))?;
-    let selected_loaders: Vec<String> = serde_json::from_str(selected_loaders_json)
-        .map_err(|error| CoreError::validation(format!("invalid selected loaders json: {error}")))?;
+    let selected_versions: Vec<String> =
+        serde_json::from_str(selected_versions_json).map_err(|error| {
+            CoreError::validation(format!("invalid selected versions json: {error}"))
+        })?;
+    let selected_loaders: Vec<String> =
+        serde_json::from_str(selected_loaders_json).map_err(|error| {
+            CoreError::validation(format!("invalid selected loaders json: {error}"))
+        })?;
     let mut resolved = Vec::new();
     for dependency in dependencies {
         if dependency.get("dependency_type").and_then(Value::as_str) != Some("required") {
@@ -2322,8 +2491,13 @@ fn fetch_modrinth_dependencies(
             selected_versions_json,
             selected_loaders_json,
         )?;
-        if let Some(version) = dep_filtered.as_array().and_then(|items| items.first()).cloned() {
-            if modrinth_version_matches(&version, &selected_versions, &selected_loaders, type_name) {
+        if let Some(version) = dep_filtered
+            .as_array()
+            .and_then(|items| items.first())
+            .cloned()
+        {
+            if modrinth_version_matches(&version, &selected_versions, &selected_loaders, type_name)
+            {
                 resolved.push(version);
             }
         }
@@ -2352,7 +2526,9 @@ fn modrinth_version_matches(
         loaders = vec!["minecraft".to_string()];
     }
     let version_match = selected_versions.is_empty()
-        || game_versions.iter().any(|version_name| selected_versions.contains(version_name));
+        || game_versions
+            .iter()
+            .any(|version_name| selected_versions.contains(version_name));
     let version_loaders = version
         .get("loaders")
         .and_then(Value::as_array)
@@ -2364,7 +2540,10 @@ fn modrinth_version_matches(
     let loader_match = if type_name == "shader" || type_name == "resourcepack" {
         true
     } else {
-        loaders.is_empty() || version_loaders.iter().any(|loader| loaders.contains(loader))
+        loaders.is_empty()
+            || version_loaders
+                .iter()
+                .any(|loader| loaders.contains(loader))
     };
     version_match && loader_match
 }
@@ -2384,8 +2563,9 @@ fn url_encode(value: &str) -> String {
 }
 
 fn build_game_launch_plan(json: &str) -> Result<GameLaunchPlanResponse, CoreError> {
-    let request: GameLaunchPlanRequest = serde_json::from_str(json)
-        .map_err(|error| CoreError::validation(format!("invalid game launch plan json: {error}")))?;
+    let request: GameLaunchPlanRequest = serde_json::from_str(json).map_err(|error| {
+        CoreError::validation(format!("invalid game launch plan json: {error}"))
+    })?;
     let java_path = request.java_path.trim().to_string();
     if java_path.is_empty() {
         return Err(CoreError::validation("game java path must not be empty"));
@@ -2412,10 +2592,7 @@ fn build_game_launch_plan(json: &str) -> Result<GameLaunchPlanResponse, CoreErro
     })
 }
 
-fn replace_game_launch_placeholders(
-    input: String,
-    request: &GameLaunchPlanRequest,
-) -> String {
+fn replace_game_launch_placeholders(input: String, request: &GameLaunchPlanRequest) -> String {
     let mut replaced = input
         .replace("${xms}", &request.xms.to_string())
         .replace("${xmx}", &request.xmx.to_string());
@@ -2506,9 +2683,9 @@ fn maven_coordinate_to_relative_path(coordinate: &str) -> Option<String> {
     }
 
     Some(match classifier {
-        Some(classifier) => format!(
-            "{group}/{artifact}/{version}/{artifact}-{version}-{classifier}.jar"
-        ),
+        Some(classifier) => {
+            format!("{group}/{artifact}/{version}/{artifact}-{version}-{classifier}.jar")
+        }
         None => format!("{group}/{artifact}/{version}/{artifact}-{version}.jar"),
     })
 }
@@ -2555,9 +2732,7 @@ fn parse_maven_coordinate_with_at_symbol(coordinate: &str) -> String {
     } else {
         format!(".{extension}")
     };
-    let file_name = format!(
-        "{artifact_id}-{version}{classifier_suffix}{extension_suffix}"
-    );
+    let file_name = format!("{artifact_id}-{version}{classifier_suffix}{extension_suffix}");
     let group_path = group_id.replace('.', "/");
     format!("{group_path}/{artifact_id}/{version}/{file_name}")
 }
@@ -2636,8 +2811,9 @@ fn process_loader_placeholders(json: &str, game_version: &str) -> Result<Value, 
 }
 
 fn execute_loader_processor(json: &str) -> Result<(), CoreError> {
-    let request: ProcessorExecutionRequest = serde_json::from_str(json)
-        .map_err(|error| CoreError::validation(format!("invalid processor execution json: {error}")))?;
+    let request: ProcessorExecutionRequest = serde_json::from_str(json).map_err(|error| {
+        CoreError::validation(format!("invalid processor execution json: {error}"))
+    })?;
     let libraries_dir = PathBuf::from(&request.libraries_dir);
     let jar_path = validate_processor_jar_path(request.processor.jar.as_deref(), &libraries_dir)?;
     let classpath = build_processor_classpath(
@@ -2654,11 +2830,7 @@ fn execute_loader_processor(json: &str) -> Result<(), CoreError> {
         &libraries_dir,
         request.data.as_ref(),
     );
-    execute_java_command(
-        &request.java_path,
-        &command,
-        &libraries_dir,
-    )?;
+    execute_java_command(&request.java_path, &command, &libraries_dir)?;
     if let Some(outputs) = request.processor.outputs.as_ref() {
         process_processor_outputs(outputs, &libraries_dir)?;
     }
@@ -2670,8 +2842,9 @@ fn validate_processor_jar_path(
     libraries_dir: &Path,
 ) -> Result<PathBuf, CoreError> {
     let jar = jar.ok_or_else(|| CoreError::validation("processor jar is missing"))?;
-    let relative_path = maven_coordinate_to_relative_path(jar)
-        .ok_or_else(|| CoreError::validation(format!("invalid processor maven coordinate: {jar}")))?;
+    let relative_path = maven_coordinate_to_relative_path(jar).ok_or_else(|| {
+        CoreError::validation(format!("invalid processor maven coordinate: {jar}"))
+    })?;
     let jar_path = libraries_dir.join(relative_path);
     if jar_path.exists() {
         Ok(jar_path)
@@ -2829,14 +3002,18 @@ fn process_processor_outputs(
             continue;
         }
         if let Some(parent) = destination_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| CoreError::runtime(format!("failed to create processor output directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                CoreError::runtime(format!(
+                    "failed to create processor output directory: {error}"
+                ))
+            })?;
         }
         if destination_path.exists() {
             remove_path_if_exists(&destination_path)?;
         }
-        fs::rename(&source_path, &destination_path)
-            .map_err(|error| CoreError::runtime(format!("failed to move processor output: {error}")))?;
+        fs::rename(&source_path, &destination_path).map_err(|error| {
+            CoreError::runtime(format!("failed to move processor output: {error}"))
+        })?;
     }
     Ok(())
 }
@@ -2850,9 +3027,9 @@ fn get_main_class_from_jar(jar_path: &Path) -> Result<String, CoreError> {
         .by_name("META-INF/MANIFEST.MF")
         .map_err(|error| CoreError::runtime(format!("missing processor manifest: {error}")))?;
     let mut content = String::new();
-    manifest
-        .read_to_string(&mut content)
-        .map_err(|error| CoreError::runtime(format!("failed to read processor manifest: {error}")))?;
+    manifest.read_to_string(&mut content).map_err(|error| {
+        CoreError::runtime(format!("failed to read processor manifest: {error}"))
+    })?;
     for line in content.lines() {
         let trimmed = line.trim();
         if let Some(main_class) = trimmed.strip_prefix("Main-Class:") {
@@ -2868,12 +3045,14 @@ fn set_executable_permission(path: &Path) -> Result<(), CoreError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let metadata = fs::metadata(path)
-            .map_err(|error| CoreError::runtime(format!("failed to inspect file permissions: {error}")))?;
+        let metadata = fs::metadata(path).map_err(|error| {
+            CoreError::runtime(format!("failed to inspect file permissions: {error}"))
+        })?;
         let mut permissions = metadata.permissions();
         permissions.set_mode(permissions.mode() | 0o111);
-        fs::set_permissions(path, permissions)
-            .map_err(|error| CoreError::runtime(format!("failed to set executable permission: {error}")))?;
+        fs::set_permissions(path, permissions).map_err(|error| {
+            CoreError::runtime(format!("failed to set executable permission: {error}"))
+        })?;
         Ok(())
     }
     #[cfg(not(unix))]
@@ -2896,8 +3075,9 @@ fn download_file_with_headers(
     let parent = destination.parent().ok_or_else(|| {
         CoreError::validation("download destination must have a parent directory")
     })?;
-    fs::create_dir_all(parent)
-        .map_err(|error| CoreError::runtime(format!("failed to create download directory: {error}")))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        CoreError::runtime(format!("failed to create download directory: {error}"))
+    })?;
 
     let temp_path = destination.with_extension(format!(
         "{}.download",
@@ -2950,8 +3130,9 @@ fn download_file_with_headers(
     if destination.exists() {
         let _ = fs::remove_file(destination);
     }
-    fs::rename(&temp_path, destination)
-        .map_err(|error| CoreError::runtime(format!("failed to persist downloaded file: {error}")))?;
+    fs::rename(&temp_path, destination).map_err(|error| {
+        CoreError::runtime(format!("failed to persist downloaded file: {error}"))
+    })?;
     Ok(destination.to_path_buf())
 }
 
@@ -2968,7 +3149,11 @@ fn compute_sha1_file(path: &Path) -> Result<String, CoreError> {
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sha1 = stdout.split_whitespace().next().unwrap_or_default().to_string();
+    let sha1 = stdout
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_string();
     if sha1.is_empty() {
         return Err(CoreError::runtime("sha1 command returned empty output"));
     }
@@ -3013,16 +3198,17 @@ fn extract_zulu_runtime(zip_path: &Path, target_directory: &Path) -> Result<(), 
     if target_directory.exists() {
         remove_path_if_exists(target_directory)?;
     }
-    fs::create_dir_all(target_directory)
-        .map_err(|error| CoreError::runtime(format!("failed to create java target directory: {error}")))?;
+    fs::create_dir_all(target_directory).map_err(|error| {
+        CoreError::runtime(format!("failed to create java target directory: {error}"))
+    })?;
 
     let prefix = find_zulu_prefix(&mut archive)?
         .ok_or_else(|| CoreError::validation("zulu runtime folder not found in archive"))?;
 
     for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|error| CoreError::runtime(format!("failed to inspect java archive entry: {error}")))?;
+        let mut entry = archive.by_index(index).map_err(|error| {
+            CoreError::runtime(format!("failed to inspect java archive entry: {error}"))
+        })?;
         let name = entry.name().replace('\\', "/");
         if !name.starts_with(&prefix) {
             continue;
@@ -3033,13 +3219,15 @@ fn extract_zulu_runtime(zip_path: &Path, target_directory: &Path) -> Result<(), 
         }
         let output = target_directory.join(relative);
         if entry.is_dir() {
-            fs::create_dir_all(&output)
-                .map_err(|error| CoreError::runtime(format!("failed to create java directory: {error}")))?;
+            fs::create_dir_all(&output).map_err(|error| {
+                CoreError::runtime(format!("failed to create java directory: {error}"))
+            })?;
             continue;
         }
         if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| CoreError::runtime(format!("failed to create java parent directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                CoreError::runtime(format!("failed to create java parent directory: {error}"))
+            })?;
         }
         let mut destination = File::create(&output)
             .map_err(|error| CoreError::runtime(format!("failed to create java file: {error}")))?;
@@ -3051,9 +3239,9 @@ fn extract_zulu_runtime(zip_path: &Path, target_directory: &Path) -> Result<(), 
 
 fn find_zulu_prefix(archive: &mut ZipArchive<File>) -> Result<Option<String>, CoreError> {
     for index in 0..archive.len() {
-        let entry = archive
-            .by_index(index)
-            .map_err(|error| CoreError::runtime(format!("failed to inspect java archive entry: {error}")))?;
+        let entry = archive.by_index(index).map_err(|error| {
+            CoreError::runtime(format!("failed to inspect java archive entry: {error}"))
+        })?;
         let name = entry.name().replace('\\', "/");
         let mut prefix_parts = Vec::new();
         for component in name.split('/') {
@@ -3075,15 +3263,18 @@ fn hash_resource_files(directory: &Path) -> Result<Vec<ResourceFileHashResponse>
     }
 
     let mut results = Vec::new();
-    for entry in fs::read_dir(directory)
-        .map_err(|error| CoreError::runtime(format!("failed to read resource directory: {error}")))? 
-    {
-        let entry = entry
-            .map_err(|error| CoreError::runtime(format!("failed to inspect resource entry: {error}")))?;
+    for entry in fs::read_dir(directory).map_err(|error| {
+        CoreError::runtime(format!("failed to read resource directory: {error}"))
+    })? {
+        let entry = entry.map_err(|error| {
+            CoreError::runtime(format!("failed to inspect resource entry: {error}"))
+        })?;
         let path = entry.path();
         if !entry
             .file_type()
-            .map_err(|error| CoreError::runtime(format!("failed to inspect resource file type: {error}")))? 
+            .map_err(|error| {
+                CoreError::runtime(format!("failed to inspect resource file type: {error}"))
+            })?
             .is_file()
         {
             continue;
@@ -3110,11 +3301,12 @@ fn create_backup_archive(
     output_path: &Path,
     keep_count: Option<usize>,
 ) -> Result<(), CoreError> {
-    let parent = output_path.parent().ok_or_else(|| {
-        CoreError::validation("backup output path must have a parent directory")
+    let parent = output_path
+        .parent()
+        .ok_or_else(|| CoreError::validation("backup output path must have a parent directory"))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        CoreError::runtime(format!("failed to create backup directory: {error}"))
     })?;
-    fs::create_dir_all(parent)
-        .map_err(|error| CoreError::runtime(format!("failed to create backup directory: {error}")))?;
     if output_path.exists() {
         remove_path_if_exists(output_path)?;
     }
@@ -3145,10 +3337,11 @@ fn list_backup_archives(backup_root: &Path) -> Result<Vec<BackupEntryResponse>, 
     }
     let mut entries = Vec::new();
     for entry in fs::read_dir(backup_root)
-        .map_err(|error| CoreError::runtime(format!("failed to read backup directory: {error}")))? 
+        .map_err(|error| CoreError::runtime(format!("failed to read backup directory: {error}")))?
     {
-        let entry = entry
-            .map_err(|error| CoreError::runtime(format!("failed to inspect backup entry: {error}")))?;
+        let entry = entry.map_err(|error| {
+            CoreError::runtime(format!("failed to inspect backup entry: {error}"))
+        })?;
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("zip") {
             continue;
@@ -3166,7 +3359,8 @@ fn list_backup_archives(backup_root: &Path) -> Result<Vec<BackupEntryResponse>, 
         });
     }
     entries.sort_by(|left, right| {
-        right.modified_at
+        right
+            .modified_at
             .partial_cmp(&left.modified_at)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
@@ -3180,9 +3374,9 @@ fn list_backup_servers(backup_path: &Path) -> Result<Vec<String>, CoreError> {
         .map_err(|error| CoreError::runtime(format!("failed to open backup archive: {error}")))?;
     let mut names = std::collections::BTreeSet::new();
     for index in 0..archive.len() {
-        let entry = archive
-            .by_index(index)
-            .map_err(|error| CoreError::runtime(format!("failed to inspect backup archive entry: {error}")))?;
+        let entry = archive.by_index(index).map_err(|error| {
+            CoreError::runtime(format!("failed to inspect backup archive entry: {error}"))
+        })?;
         let normalized = entry.name().replace('\\', "/");
         if let Some(name) = backup_server_name_from_path(&normalized) {
             names.insert(name.to_string());
@@ -3200,8 +3394,9 @@ fn restore_backup_server(
         .map_err(|error| CoreError::runtime(format!("failed to open backup zip: {error}")))?;
     let mut archive = ZipArchive::new(file)
         .map_err(|error| CoreError::runtime(format!("failed to open backup archive: {error}")))?;
-    fs::create_dir_all(target_root)
-        .map_err(|error| CoreError::runtime(format!("failed to create restore target root: {error}")))?;
+    fs::create_dir_all(target_root).map_err(|error| {
+        CoreError::runtime(format!("failed to create restore target root: {error}"))
+    })?;
     let server_root = target_root.join(server_name);
     if server_root.exists() {
         remove_path_if_exists(&server_root)?;
@@ -3210,9 +3405,9 @@ fn restore_backup_server(
     let prefix = format!("servers/{server_name}/");
     let mut restored = false;
     for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|error| CoreError::runtime(format!("failed to inspect backup archive entry: {error}")))?;
+        let mut entry = archive.by_index(index).map_err(|error| {
+            CoreError::runtime(format!("failed to inspect backup archive entry: {error}"))
+        })?;
         let normalized = entry.name().replace('\\', "/");
         if !normalized.starts_with(&prefix) {
             continue;
@@ -3223,19 +3418,25 @@ fn restore_backup_server(
         }
         let output = server_root.join(relative);
         if entry.is_dir() {
-            fs::create_dir_all(&output)
-                .map_err(|error| CoreError::runtime(format!("failed to create restored directory: {error}")))?;
+            fs::create_dir_all(&output).map_err(|error| {
+                CoreError::runtime(format!("failed to create restored directory: {error}"))
+            })?;
             restored = true;
             continue;
         }
         if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| CoreError::runtime(format!("failed to create restored parent directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                CoreError::runtime(format!(
+                    "failed to create restored parent directory: {error}"
+                ))
+            })?;
         }
-        let mut destination = File::create(&output)
-            .map_err(|error| CoreError::runtime(format!("failed to create restored file: {error}")))?;
-        std::io::copy(&mut entry, &mut destination)
-            .map_err(|error| CoreError::runtime(format!("failed to restore backup file: {error}")))?;
+        let mut destination = File::create(&output).map_err(|error| {
+            CoreError::runtime(format!("failed to create restored file: {error}"))
+        })?;
+        std::io::copy(&mut entry, &mut destination).map_err(|error| {
+            CoreError::runtime(format!("failed to restore backup file: {error}"))
+        })?;
         restored = true;
     }
     if !restored {
@@ -3292,8 +3493,9 @@ fn read_cli_settings() -> Result<CliSettingsFile, CoreError> {
 fn write_cli_settings(settings: &CliSettingsFile) -> Result<(), CoreError> {
     let path = cli_settings_path()?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| CoreError::runtime(format!("failed to create settings directory: {error}")))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            CoreError::runtime(format!("failed to create settings directory: {error}"))
+        })?;
     }
     let content = serde_json::to_string_pretty(settings)
         .map_err(|error| CoreError::runtime(format!("failed to encode settings file: {error}")))?;
@@ -3303,22 +3505,37 @@ fn write_cli_settings(settings: &CliSettingsFile) -> Result<(), CoreError> {
 }
 
 fn cli_settings_path() -> Result<PathBuf, CoreError> {
-    Ok(SwiftDataServerStore::platform_paths()?.working_path.join("data").join("settings.json"))
+    Ok(SwiftDataServerStore::platform_paths()?
+        .working_path
+        .join("data")
+        .join("settings.json"))
 }
 
 fn legacy_cli_settings_path() -> Result<PathBuf, CoreError> {
-    Ok(SwiftDataServerStore::platform_paths()?.working_path.join("data").join("cli_settings.json"))
+    Ok(SwiftDataServerStore::platform_paths()?
+        .working_path
+        .join("data")
+        .join("cli_settings.json"))
 }
 
-fn execute_rcon_command(host: &str, port: u16, password: &str, command: &str) -> Result<String, CoreError> {
+fn execute_rcon_command(
+    host: &str,
+    port: u16,
+    password: &str,
+    command: &str,
+) -> Result<String, CoreError> {
     let mut stream = TcpStream::connect((host, port))
         .map_err(|error| CoreError::runtime(format!("failed to connect to rcon: {error}")))?;
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(6)))
-        .map_err(|error| CoreError::runtime(format!("failed to configure rcon timeout: {error}")))?;
+        .map_err(|error| {
+            CoreError::runtime(format!("failed to configure rcon timeout: {error}"))
+        })?;
     stream
         .set_write_timeout(Some(std::time::Duration::from_secs(6)))
-        .map_err(|error| CoreError::runtime(format!("failed to configure rcon timeout: {error}")))?;
+        .map_err(|error| {
+            CoreError::runtime(format!("failed to configure rcon timeout: {error}"))
+        })?;
 
     send_rcon_packet(&mut stream, 101, 3, password)?;
     let auth = receive_rcon_packet(&mut stream)?;
@@ -3359,16 +3576,18 @@ fn send_rcon_packet(
 
 fn receive_rcon_packet(stream: &mut TcpStream) -> Result<RconPacket, CoreError> {
     let mut length_bytes = [0_u8; 4];
-    std::io::Read::read_exact(stream, &mut length_bytes)
-        .map_err(|error| CoreError::runtime(format!("failed to read rcon packet length: {error}")))?;
+    std::io::Read::read_exact(stream, &mut length_bytes).map_err(|error| {
+        CoreError::runtime(format!("failed to read rcon packet length: {error}"))
+    })?;
     let length = i32::from_le_bytes(length_bytes);
     if length < 10 {
         return Err(CoreError::runtime("invalid rcon packet length"));
     }
 
     let mut payload = vec![0_u8; length as usize];
-    std::io::Read::read_exact(stream, &mut payload)
-        .map_err(|error| CoreError::runtime(format!("failed to read rcon packet payload: {error}")))?;
+    std::io::Read::read_exact(stream, &mut payload).map_err(|error| {
+        CoreError::runtime(format!("failed to read rcon packet payload: {error}"))
+    })?;
 
     let request_id = i32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
     let body = String::from_utf8_lossy(&payload[8..payload.len().saturating_sub(2)]).into_owned();

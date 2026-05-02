@@ -38,8 +38,6 @@ pub fn print_error(error: &CoreError) {
 
 fn to_json<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|error| {
-        format!(
-            "{{\"ok\":false,\"error\":{{\"message\":\"failed to encode json: {error}\"}}}}"
-        )
+        format!("{{\"ok\":false,\"error\":{{\"message\":\"failed to encode json: {error}\"}}}}")
     })
 }
