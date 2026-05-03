@@ -23,7 +23,6 @@ class ServerStatusManager: ObservableObject {
         if let cachedState = serverRunningStates[serverId], cachedState != actuallyRunning {
             serverRunningStates[serverId] = actuallyRunning
             persistRunningStates()
-            Logger.shared.debug("服务器状态同步更新: \(serverId) -> \(actuallyRunning ? "运行中" : "已停止")")
         } else if serverRunningStates[serverId] == nil {
             serverRunningStates[serverId] = actuallyRunning
             persistRunningStates()
@@ -37,7 +36,6 @@ class ServerStatusManager: ObservableObject {
             if currentState != isRunning {
                 self.serverRunningStates[serverId] = isRunning
                 self.persistRunningStates()
-                Logger.shared.debug("服务器状态更新: \(serverId) -> \(isRunning ? "运行中" : "已停止")")
             }
         }
     }
@@ -88,7 +86,6 @@ class ServerStatusManager: ObservableObject {
                 } else {
                     self.launchStartTimes.removeValue(forKey: serverId)
                 }
-                Logger.shared.debug("服务器启动中状态更新: \(serverId) -> \(isLaunching ? "启动中" : "非启动中")")
             }
         }
     }

@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
+import Dispatch
 // swiftlint:disable file_length
+// swiftlint:disable:next type_body_length
 struct ServerConsoleView: View {
     let server: ServerInstance
     @StateObject private var console = ServerConsoleManager.shared
@@ -16,6 +18,10 @@ struct ServerConsoleView: View {
     @State private var lastLocalPolledText: String = ""
     @State private var lastLocalLogFilePath: String = ""
     @State private var lastLocalLogOffset: UInt64 = 0
+    @State private var localLogMonitor: DispatchSourceFileSystemObject?
+    @State private var localLogFileDescriptor: CInt = -1
+    @State private var isLocalLogLoading: Bool = false
+    @State private var hasPendingLocalLogReload: Bool = false
     @State private var rconPort: String = "25575"
     @State private var rconPassword: String = ""
     @State private var lastRemoteLogError: String = ""
@@ -79,7 +85,12 @@ struct ServerConsoleView: View {
         }
         .onReceive(console.$latestEvent) { event in
             guard let event, event.serverId == server.id else { return }
-            consoleEvent = event
+            if isRemoteServer {
+                consoleEvent = event
+            } else {
+                initialConsoleLines = console.logLines(for: server.id)
+                consoleEvent = nil
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .serverDetailToolbarAction)) { note in
             guard let action = ServerDetailToolbarActionBus.action(from: note) else { return }
@@ -103,7 +114,7 @@ struct ServerConsoleView: View {
     private var consoleOutput: some View {
         NativeTerminalRepresentable(
             initialLines: initialConsoleLines,
-            event: consoleEvent,
+            event: isRemoteServer ? consoleEvent : nil,
             enableColor: generalSettings.enableConsoleColoredOutput,
             fontStyle: generalSettings.consoleFontStyle,
             lineSpacing: generalSettings.consoleLineSpacing,
@@ -256,15 +267,7 @@ struct ServerConsoleView: View {
     }
 
     private var isRemoteServer: Bool {
-        if server.nodeId != ServerNode.local.id {
-            return true
-        }
-        if server.javaPath != "java" {
-            return false
-        }
-        let localJar = AppPaths.serverDirectory(serverName: server.directoryName)
-            .appendingPathComponent(server.serverJar)
-        return FileManager.default.fileExists(atPath: localJar.path) == false
+        server.nodeId != ServerNode.local.id
     }
 
     private var isRconMode: Bool {
@@ -300,34 +303,44 @@ struct ServerConsoleView: View {
 
     private func startLocalLogPollingIfNeeded() {
         guard !isRemoteServer else { return }
-        guard ServerProcessManager.shared.getProcess(for: server.id) == nil else {
-            Logger.shared.debug("跳过本地日志轮询，ServerProcessManager 中存在进程: \(server.id)")
-            return
-        }
         localLogTask?.cancel()
+        teardownLocalLogMonitor()
         let serverName = server.directoryName
-        Logger.shared.debug("启动本地日志轮询: \(server.id) -> \(serverName)")
         localLogTask = Task {
             await loadLocalLog(serverName: serverName)
-            while !Task.isCancelled {
-                await loadLocalLog(serverName: serverName)
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            }
         }
     }
 
     private func stopLocalLogPolling() {
         localLogTask?.cancel()
         localLogTask = nil
+        teardownLocalLogMonitor()
+        isLocalLogLoading = false
+        hasPendingLocalLogReload = false
     }
 
     @MainActor
     private func loadLocalLog(serverName: String) async {
+        if isLocalLogLoading {
+            hasPendingLocalLogReload = true
+            return
+        }
+        isLocalLogLoading = true
+        defer {
+            isLocalLogLoading = false
+            if hasPendingLocalLogReload {
+                hasPendingLocalLogReload = false
+                Task { @MainActor in
+                    await loadLocalLog(serverName: serverName)
+                }
+            }
+        }
         do {
-            var arguments = ["server", "local-log-poll", server.id, "--offset", String(lastLocalLogOffset)]
+            var arguments = ["server", "local-log-poll", server.id]
             if !lastLocalLogFilePath.isEmpty {
                 arguments.append(contentsOf: ["--current-file-path", lastLocalLogFilePath])
             }
+            arguments.append(contentsOf: ["--offset", String(lastLocalLogOffset)])
             let response: ScslCoreCLIEnvelope<LocalLogPollCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
                 arguments: arguments
             )
@@ -336,23 +349,69 @@ struct ServerConsoleView: View {
             if lastLocalLogFilePath != filePath {
                 lastLocalLogFilePath = filePath
                 lastLocalPolledText = ""
+                configureLocalLogMonitor(filePath: filePath, serverName: serverName)
             }
             lastLocalLogOffset = update.nextOffset
             if update.appendedText.isEmpty {
                 return
             }
 
-            Logger.shared.debug("本地控制台读取日志增量: \(filePath)")
-            let combined = lastLocalPolledText + update.appendedText
-            let current = combined.components(separatedBy: .newlines).suffix(300).joined(separator: "\n")
-            let delta = incrementalDelta(previous: lastLocalPolledText, current: current)
-            if !delta.isEmpty {
-                console.appendExternal(serverId: server.id, text: delta + "\n")
+            let appended = update.appendedText.trimmingCharacters(in: .newlines)
+            if !appended.isEmpty {
+                let appendedLines = appended.components(separatedBy: .newlines)
+                if !appendedLines.isEmpty {
+                    initialConsoleLines.append(contentsOf: appendedLines)
+                    if initialConsoleLines.count > 2_000 {
+                        initialConsoleLines = Array(initialConsoleLines.suffix(2_000))
+                    }
+                }
             }
-            lastLocalPolledText = current
-        } catch {
-            Logger.shared.debug("本地控制台读取日志增量失败: \(serverName) - \(error.localizedDescription)")
+            let combined = lastLocalPolledText + update.appendedText
+            lastLocalPolledText = combined
+                .components(separatedBy: .newlines)
+                .suffix(300)
+                .joined(separator: "\n")
+        } catch {}
+    }
+
+    private func configureLocalLogMonitor(filePath: String, serverName: String) {
+        teardownLocalLogMonitor()
+        guard !filePath.isEmpty else { return }
+        let descriptor = open(filePath, O_EVTONLY)
+        guard descriptor >= 0 else {
+            return
         }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .extend, .rename, .delete],
+            queue: DispatchQueue.main
+        )
+        source.setEventHandler {
+            let event = source.data
+            if event.contains(.delete) || event.contains(.rename) {
+                self.teardownLocalLogMonitor()
+                Task { @MainActor in
+                    await self.loadLocalLog(serverName: serverName)
+                }
+                return
+            }
+            Task { @MainActor in
+                await self.loadLocalLog(serverName: serverName)
+            }
+        }
+        source.setCancelHandler {
+            close(descriptor)
+        }
+        localLogFileDescriptor = descriptor
+        localLogMonitor = source
+        source.resume()
+    }
+
+    private func teardownLocalLogMonitor() {
+        localLogMonitor?.cancel()
+        localLogMonitor = nil
+        localLogFileDescriptor = -1
     }
 
     @MainActor
@@ -936,7 +995,9 @@ private struct NativeTerminalRepresentable: NSViewRepresentable {
         }
 
         func updateInitialIfNeeded(lines: [String]) {
-            guard lastSequence == 0 else { return }
+            let filtered = lines.compactMap(normalizeLogLine)
+            let current = olderLines + self.lines
+            guard filtered != current else { return }
             setInitial(lines: lines)
         }
 

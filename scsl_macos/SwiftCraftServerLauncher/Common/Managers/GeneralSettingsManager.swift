@@ -381,11 +381,17 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
         .appendingPathComponent("backups", isDirectory: true).path {
         didSet {
             let trimmed = backupDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedPath: String
             if trimmed.isEmpty {
-                backupDirectoryPath = AppPaths.launcherSupportDirectory
+                normalizedPath = AppPaths.launcherSupportDirectory
                     .appendingPathComponent("backups", isDirectory: true).path
             } else {
-                backupDirectoryPath = (trimmed as NSString).expandingTildeInPath
+                normalizedPath = (trimmed as NSString).expandingTildeInPath
+            }
+
+            if normalizedPath != backupDirectoryPath {
+                backupDirectoryPath = normalizedPath
+                return
             }
             persistCoreSettingsIfNeeded()
             objectWillChange.send()

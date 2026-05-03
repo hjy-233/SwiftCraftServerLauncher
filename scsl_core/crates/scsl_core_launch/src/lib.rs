@@ -26,15 +26,15 @@ impl ServerLaunchPlan {
             if test -f .scsl.pid && kill -0 $(cat .scsl.pid) 2>/dev/null; then \
               echo __SCSL_ALREADY_RUNNING__; \
             else \
-              rm -f .scsl.pid .scsl.stdin; \
+              rm -f .scsl.pid .scsl.stdin .scsl.launch.command .scsl.launch.wrapper; \
+              cat > .scsl.launch.command <<'__SCSL_CMD__'\nexec {}\n__SCSL_CMD__\n              cat > .scsl.launch.wrapper <<'__SCSL_WRAPPER__'\n#!/bin/sh\necho $$ > .scsl.pid\nexec /bin/sh ./.scsl.launch.command\n__SCSL_WRAPPER__\n              chmod +x .scsl.launch.command .scsl.launch.wrapper && \
               mkfifo .scsl.stdin && \
-              nohup /bin/sh -lc \"tail -f .scsl.stdin | /bin/sh -lc {}\" >> scsl-server.log 2>&1 & \
-              echo $! > .scsl.pid; \
+              nohup /bin/sh -lc 'tail -f .scsl.stdin | ./.scsl.launch.wrapper' >> scsl-server.log 2>&1 & \
               sleep 1; \
               if test -f .scsl.pid && kill -0 $(cat .scsl.pid) 2>/dev/null; then echo __SCSL_STARTED__; else echo __SCSL_START_FAILED__; fi; \
             fi",
             shell_quote(&self.server_dir.to_string_lossy()),
-            shell_quote(&self.launch_command)
+            self.launch_command,
         )
     }
 
@@ -46,7 +46,7 @@ impl ServerLaunchPlan {
             if test -f .scsl.pid; then \
               pid=$(cat .scsl.pid); \
               if kill -0 \"$pid\" 2>/dev/null; then pkill -TERM -P \"$pid\" 2>/dev/null || true; kill -TERM \"$pid\" 2>/dev/null || true; fi; \
-              rm -f .scsl.pid .scsl.stdin; \
+              rm -f .scsl.pid .scsl.stdin .scsl.launch.command .scsl.launch.wrapper; \
             fi",
             shell_quote(&self.server_dir.to_string_lossy())
         )
@@ -80,10 +80,11 @@ impl ServerLaunchPlanner {
         let server_dir = self.server_dir(server);
         let custom = server.launch_command.trim();
         if !custom.is_empty() {
+            let normalized = normalize_launch_command(custom, &server.java_path);
             return Ok(ServerLaunchPlan {
                 server_id: server.id.clone(),
                 server_dir,
-                launch_command: append_no_gui_if_needed(custom),
+                launch_command: normalized,
                 kind: ServerLaunchKind::CustomCommand,
             });
         }
@@ -196,6 +197,23 @@ pub fn append_no_gui_if_needed(command: &str) -> String {
         command.to_string()
     } else {
         format!("{command} nogui")
+    }
+}
+
+pub fn normalize_launch_command(command: &str, executable_hint: &str) -> String {
+    let with_no_gui = append_no_gui_if_needed(command);
+    let executable_hint = executable_hint.trim();
+    if !executable_hint.is_empty()
+        && let Some(rest) = with_no_gui.strip_prefix(executable_hint)
+    {
+        let rest_tokens = split_args(rest.trim());
+        return shell_join(std::iter::once(executable_hint.to_string()).chain(rest_tokens));
+    }
+    let tokens = split_args(&with_no_gui);
+    if tokens.is_empty() {
+        with_no_gui
+    } else {
+        shell_join(tokens)
     }
 }
 
