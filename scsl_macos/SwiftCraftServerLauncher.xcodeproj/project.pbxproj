@@ -56,6 +56,7 @@
 				9023D82D2E3139B5005A53F1 /* Sources */,
 				9023D82E2E3139B5005A53F1 /* Frameworks */,
 				9023D82F2E3139B5005A53F1 /* Resources */,
+				90B0C10131BB000100A1B2C3 /* Embed scsl CLI */,
 			);
 			buildRules = (
 			);
@@ -125,6 +126,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		90B0C10131BB000100A1B2C3 /* Embed scsl CLI */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed scsl CLI";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/cli/scsl",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nPROFILE=\"debug\"\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n  PROFILE=\"release\"\nfi\nCLI_SOURCE=\"${SRCROOT}/../scsl_core/target/${PROFILE}/scsl\"\nCLI_DEST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/cli/scsl\"\nif [ -f \"$CLI_SOURCE\" ]; then\n  mkdir -p \"$(dirname \"$CLI_DEST\")\"\n  cp \"$CLI_SOURCE\" \"$CLI_DEST\"\n  chmod +x \"$CLI_DEST\"\n  echo \"Embedded scsl CLI at $CLI_DEST\"\nelse\n  echo \"warning: scsl CLI not found at $CLI_SOURCE; app will use runtime fallback\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		9023D82D2E3139B5005A53F1 /* Sources */ = {

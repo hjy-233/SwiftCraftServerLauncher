@@ -143,6 +143,12 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bundled CLI
+        run: cargo build --manifest-path scsl_core/Cargo.toml -p scsl_cli --release
+
       - name: Build app for ${{ matrix.arch }}
         run: |
           BUILD_DIR="build_${{ matrix.arch }}"
@@ -185,6 +191,12 @@ jobs:
 
           /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_KEY" "$INFO_PLIST_PATH" 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $SPARKLE_PUBLIC_KEY" "$INFO_PLIST_PATH"
+
+      - name: Verify bundled CLI
+        run: |
+          ARCHIVE_PATH="build_${{ matrix.arch }}/SwiftCraftServerLauncher.xcarchive"
+          APP_PATH="$ARCHIVE_PATH/Products/Applications/SwiftCraftServerLauncher.app"
+          test -x "$APP_PATH/Contents/Resources/cli/scsl"
 
       - name: Process app with archify
         run: |

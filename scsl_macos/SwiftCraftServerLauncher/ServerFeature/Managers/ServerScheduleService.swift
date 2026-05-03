@@ -113,12 +113,13 @@ final class ServerScheduleService: ObservableObject {
     private var consolePollTasks: [String: Task<Void, Never>] = [:]
     private var lastLocalPolledText: [String: String] = [:]
     private var lastRemotePolledText: [String: String] = [:]
+    private var lastLocalLogFilePath: [String: String] = [:]
+    private var lastLocalLogOffset: [String: UInt64] = [:]
 
     private init() {}
 
     func attach(nodeRepository: ServerNodeRepository) {
         self.nodeRepository = nodeRepository
-        subscribeConsole()
     }
 
     func refreshServers(_ servers: [ServerInstance]) {
@@ -218,41 +219,19 @@ final class ServerScheduleService: ObservableObject {
     }
 
     private func startTimerIfNeeded() {
-        if timer != nil { return }
-        timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.tick()
-            }
-        }
-        if let timer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
+        timer?.invalidate()
+        timer = nil
     }
 
     private func refreshConsolePolling() {
-        let activeServerIds = Set(schedulesByServerId.compactMap { serverId, schedules -> String? in
-            let hasConsole = schedules.contains { $0.isEnabled && $0.trigger == .consoleKeyword }
-            if hasConsole {
-                return serverId
-            }
-            return nil
-        })
-
-        for (serverId, task) in consolePollTasks where !activeServerIds.contains(serverId) {
+        for (_, task) in consolePollTasks {
             task.cancel()
-            consolePollTasks.removeValue(forKey: serverId)
-            lastLocalPolledText.removeValue(forKey: serverId)
-            lastRemotePolledText.removeValue(forKey: serverId)
         }
-
-        for serverId in activeServerIds where consolePollTasks[serverId] == nil {
-            consolePollTasks[serverId] = Task.detached(priority: .background) { [weak self] in
-                while !Task.isCancelled {
-                    await self?.pollConsole(for: serverId)
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                }
-            }
-        }
+        consolePollTasks.removeAll()
+        lastLocalPolledText.removeAll()
+        lastRemotePolledText.removeAll()
+        lastLocalLogFilePath.removeAll()
+        lastLocalLogOffset.removeAll()
     }
 
     private func pollConsole(for serverId: String) async {
@@ -265,26 +244,26 @@ final class ServerScheduleService: ObservableObject {
     }
 
     private func pollLocalLog(server: ServerInstance) async {
-        let serverDir = AppPaths.serverDirectory(serverName: server.directoryName)
-        let candidates = [
-            serverDir.appendingPathComponent("logs/latest.log"),
-            serverDir.appendingPathComponent("latest.log"),
-            serverDir.appendingPathComponent("scsl-server.log"),
-            serverDir.appendingPathComponent("server.log"),
-        ]
-        for file in candidates where FileManager.default.fileExists(atPath: file.path) {
-            if let text = try? String(contentsOf: file, encoding: .utf8), !text.isEmpty {
-                let current = text.components(separatedBy: .newlines).suffix(300).joined(separator: "\n")
-                let previous = lastLocalPolledText[server.id] ?? ""
-                let delta = incrementalDelta(previous: previous, current: current)
-                if !delta.isEmpty {
-                    ServerConsoleManager.shared.appendExternal(serverId: server.id, text: delta + "\n")
-                    lastLocalPolledText[server.id] = current
-                } else {
-                    lastLocalPolledText[server.id] = current
-                }
-                return
+        do {
+            var arguments = ["server", "local-log-poll", server.id]
+            if let currentFilePath = lastLocalLogFilePath[server.id], !currentFilePath.isEmpty {
+                arguments.append(contentsOf: ["--current-file-path", currentFilePath])
             }
+            let offset = lastLocalLogOffset[server.id] ?? 0
+            arguments.append(contentsOf: ["--offset", String(offset)])
+            let response: ScslCoreCLIEnvelope<LocalLogPollResponse> = try await ScslCoreCLIService.shared.runJSON(
+                arguments: arguments
+            )
+            let update = response.data
+            lastLocalLogFilePath[server.id] = update.filePath ?? ""
+            lastLocalLogOffset[server.id] = update.nextOffset
+            guard !update.appendedText.isEmpty else { return }
+            let current = (lastLocalPolledText[server.id] ?? "") + update.appendedText
+            let normalized = current.components(separatedBy: .newlines).suffix(300).joined(separator: "\n")
+            lastLocalPolledText[server.id] = normalized
+            ServerConsoleManager.shared.appendExternal(serverId: server.id, text: update.appendedText)
+        } catch {
+            Logger.shared.debug("定时任务本地日志轮询失败: \(server.name) - \(error.localizedDescription)")
         }
     }
 
@@ -423,18 +402,15 @@ final class ServerScheduleService: ObservableObject {
                     let age = Date().timeIntervalSince(guardInfo.time)
                     if age < 2.0 {
                         let currentLine: String
-                        let lastLine: String
                         let lastCommand: String
                         if schedule.keywordIgnoreCase {
                             currentLine = message.lowercased()
-                            lastLine = guardInfo.line.lowercased()
                             lastCommand = guardInfo.command.lowercased()
                         } else {
                             currentLine = message
-                            lastLine = guardInfo.line
                             lastCommand = guardInfo.command
                         }
-                        if currentLine == lastLine || currentLine.contains(lastCommand) {
+                        if currentLine.contains(lastCommand) {
                             continue
                         }
                     }
@@ -593,7 +569,9 @@ final class ServerScheduleService: ObservableObject {
             case .command:
                 let command = buildScheduledCommand(schedule: schedule, context: context)
                 guard !command.isEmpty else { return false }
-                _ = try await ScslCoreCLIService.shared.run(arguments: ["server", "send", server.id, command])
+                let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
+                    arguments: ["server", "send", server.id, command]
+                )
                 return true
             }
         } catch {
@@ -621,16 +599,18 @@ final class ServerScheduleService: ObservableObject {
         }
         command = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return "" }
-        if let guardInfo = lastConsoleTrigger[schedule.id],
-           Date().timeIntervalSince(guardInfo.time) < 1.0 {
-            return ""
-        }
         return command
     }
 
     func lastRunDate(for schedule: ServerSchedule) -> Date? {
         lastRunAt[schedule.id]
     }
+}
+
+private struct LocalLogPollResponse: Decodable {
+    let filePath: String?
+    let appendedText: String
+    let nextOffset: UInt64
 }
 
 extension Notification.Name {

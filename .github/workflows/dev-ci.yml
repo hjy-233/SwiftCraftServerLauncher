@@ -89,6 +89,12 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bundled CLI
+        run: cargo build --manifest-path scsl_core/Cargo.toml -p scsl_cli
+
       - name: Build
         run: |
           xcodebuild \
@@ -98,3 +104,12 @@ jobs:
             -destination "platform=macOS" \
             -skipPackagePluginValidation \
             build
+
+      - name: Verify bundled CLI
+        run: |
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -path "*Build/Products/Debug/SwiftCraftServerLauncher.app" | head -n 1)
+          if [[ -z "$APP_PATH" ]]; then
+            echo "❌ 未找到 Debug app 产物"
+            exit 1
+          fi
+          test -x "$APP_PATH/Contents/Resources/cli/scsl"

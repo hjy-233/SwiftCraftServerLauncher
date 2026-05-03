@@ -1,9 +1,10 @@
 use crate::args::{
-    Cli, Command, GameCommand, MirrorCommand, MirrorCustomConfigArgs, MirrorCustomCoreArgs,
-    MirrorCustomCoreGameArgs, MirrorCustomDetailArgs, ModrinthCommand, ModrinthSearchArgs,
-    ResourceCommand, ServerCommand, ServerCreateArgs, ServerFileImportArgs, ServerFilesCommand,
-    ServerGameVersionsArgs, ServerJavaPathArgs, ServerLoaderVersionsArgs, ServerPlayersCommand,
-    ServerPropertiesCommand, ServerResolveDownloadArgs, ServerSchedulesCommand, SettingsCommand,
+    AgentCommand, Cli, Command, GameCommand, MirrorCommand, MirrorCustomConfigArgs,
+    MirrorCustomCoreArgs, MirrorCustomCoreGameArgs, MirrorCustomDetailArgs, ModrinthCommand,
+    ModrinthSearchArgs, ResourceCommand, ServerCommand, ServerCreateArgs, ServerFileImportArgs,
+    ServerFilesCommand, ServerGameVersionsArgs, ServerJavaPathArgs, ServerLoaderVersionsArgs,
+    ServerPlayersCommand, ServerPropertiesCommand, ServerResolveDownloadArgs,
+    ServerSchedulesCommand, SettingsCommand,
 };
 use crate::response::{
     AckResponse, BackupEntryResponse, BackupRestoreResponse, DeleteCorruptedResponse,
@@ -13,17 +14,21 @@ use crate::response::{
     ResourceFileHashResponse, ServerCreateResponse, ServerDetailResponse, ServerFileReadResponse,
     ServerOperationResponse, ServerSummaryResponse, VerifyJarResponse,
 };
+use chrono::{Datelike, Local, Timelike};
+use fastnbt::{from_bytes as nbt_from_bytes, to_bytes as nbt_to_bytes};
+use flate2::read::GzDecoder;
+use regex::Regex;
 use scsl_core::{
-    CoreError, ForgeInstallerPlanner, InMemoryRuntime, InMemoryStore, LocalServerFileEntry,
-    LocalServerRuntime, LogQuery, ResourceDownloadPlanner, ResourceType, ScslCore,
-    ServerDownloadPlanner, ServerInstance, ServerInventory, ServerInventoryAnalyzer,
+    CoreError, ForgeInstallerPlanner, InMemoryRuntime, InMemoryStore, LocalAppServerStore,
+    LocalServerFileEntry, LocalServerRuntime, LogQuery, ResourceDownloadPlanner, ResourceType,
+    ScslCore, ServerDownloadPlanner, ServerInstance, ServerInventory, ServerInventoryAnalyzer,
     ServerLaunchPlanner, ServerRuntimePort, ServerStatus, ServerStorePort, ServerType,
-    SwiftDataServerStore, download_file_to_path, fabric_server_jar_target,
-    fastmirror_core_detail_url, fastmirror_core_name, forge_installer_target, mirror_direct_target,
-    sample_local_server,
+    download_file_to_path, fabric_server_jar_target, fastmirror_core_detail_url,
+    fastmirror_core_name, forge_installer_target, mirror_direct_target, sample_local_server,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
@@ -31,7 +36,8 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::time::UNIX_EPOCH;
+use std::thread;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use zip::ZipArchive;
 
 pub fn build_app(cli: &Cli) -> Result<CliApp, CoreError> {
@@ -39,7 +45,7 @@ pub fn build_app(cli: &Cli) -> Result<CliApp, CoreError> {
         return Ok(build_demo_app());
     }
 
-    let default_store = SwiftDataServerStore::for_current_platform()?;
+    let default_store = LocalAppServerStore::for_current_platform()?;
     let db_path = cli
         .db
         .clone()
@@ -58,7 +64,7 @@ pub fn build_app(cli: &Cli) -> Result<CliApp, CoreError> {
 
     Ok(CliApp {
         core: ScslCore::new(
-            CliServerStore::SwiftData(SwiftDataServerStore::new(db_path, working_path.clone())),
+            CliServerStore::SwiftData(LocalAppServerStore::new(db_path, working_path.clone())),
             CliServerRuntime::Local(LocalServerRuntime::new(working_path.clone())),
         ),
         inventory_analyzer: ServerInventoryAnalyzer::new(
@@ -79,8 +85,11 @@ pub fn run_command(app: &CliApp, command: Command) -> Result<Value, CoreError> {
         Command::Resource(command) => run_resource_command(app, command),
         Command::Game(command) => run_game_command(command),
         Command::Settings(command) => run_settings_command(command),
+        Command::Agent(command) => run_agent_command(app, command),
     }
 }
+
+const AGENT_LABEL: &str = "org.dcstudio.swiftcraftserverlauncher.scsl-agent";
 
 fn run_game_command(command: GameCommand) -> Result<Value, CoreError> {
     match command {
@@ -157,6 +166,23 @@ fn run_game_command(command: GameCommand) -> Result<Value, CoreError> {
             &args.server_name,
             Path::new(&args.target_root),
         )?)),
+        GameCommand::ServerAddressesRead(args) => {
+            Ok(json!(read_server_addresses(Path::new(&args.path))?))
+        }
+        GameCommand::ServerAddressesWrite(args) => {
+            let mut servers = String::new();
+            std::io::stdin()
+                .read_to_string(&mut servers)
+                .map_err(|error| CoreError::runtime(format!("failed to read stdin: {error}")))?;
+            write_server_addresses(Path::new(&args.path), &servers)?;
+            Ok(json!(AckResponse { ok: true }))
+        }
+        GameCommand::LitematicaMetadata(args) => {
+            Ok(read_litematica_metadata(Path::new(&args.path), false)?)
+        }
+        GameCommand::LitematicaFullMetadata(args) => {
+            Ok(read_litematica_metadata(Path::new(&args.path), true)?)
+        }
     }
 }
 
@@ -223,6 +249,189 @@ fn run_settings_command(command: SettingsCommand) -> Result<Value, CoreError> {
             write_cli_settings(&settings)?;
             Ok(json!(AckResponse { ok: true }))
         }
+    }
+}
+
+fn run_agent_command(app: &CliApp, command: AgentCommand) -> Result<Value, CoreError> {
+    match command {
+        AgentCommand::Status => Ok(agent_status_json()?),
+        AgentCommand::Start => {
+            ensure_launch_agent()?;
+            Ok(json!(AckResponse { ok: true }))
+        }
+        AgentCommand::Ensure => {
+            ensure_launch_agent()?;
+            Ok(json!(AckResponse { ok: true }))
+        }
+        AgentCommand::Stop => {
+            stop_launch_agent()?;
+            Ok(json!(AckResponse { ok: true }))
+        }
+        AgentCommand::Run => run_background_agent(app),
+    }
+}
+
+pub fn ensure_background_agent(_cli: &Cli) -> Result<(), CoreError> {
+    ensure_launch_agent()
+}
+
+fn agent_status_json() -> Result<Value, CoreError> {
+    let plist_path = agent_plist_path()?;
+    let status = agent_status()?;
+    Ok(json!({
+        "label": AGENT_LABEL,
+        "plistPath": plist_path.display().to_string(),
+        "isInstalled": plist_path.exists(),
+        "isRunning": status,
+    }))
+}
+
+fn ensure_launch_agent() -> Result<(), CoreError> {
+    let plist_path = write_launch_agent_plist()?;
+    if agent_status()? {
+        return Ok(());
+    }
+    let domain = launchctl_domain()?;
+    let _ = ProcessCommand::new("launchctl")
+        .args(["bootout", &domain, AGENT_LABEL])
+        .output();
+    let bootstrap = ProcessCommand::new("launchctl")
+        .args(["bootstrap", &domain, &plist_path.to_string_lossy()])
+        .output()
+        .map_err(|error| CoreError::runtime(format!("failed to start launch agent: {error}")))?;
+    if !bootstrap.status.success() {
+        let stderr = String::from_utf8_lossy(&bootstrap.stderr)
+            .trim()
+            .to_string();
+        if !stderr.contains("already bootstrapped") {
+            return Err(CoreError::runtime(if stderr.is_empty() {
+                "failed to bootstrap launch agent".to_string()
+            } else {
+                stderr
+            }));
+        }
+    }
+    let _ = ProcessCommand::new("launchctl")
+        .args(["kickstart", "-k", &format!("{}/{}", domain, AGENT_LABEL)])
+        .output();
+    Ok(())
+}
+
+fn stop_launch_agent() -> Result<(), CoreError> {
+    let domain = launchctl_domain()?;
+    let _ = ProcessCommand::new("launchctl")
+        .args(["bootout", &domain, AGENT_LABEL])
+        .output()
+        .map_err(|error| CoreError::runtime(format!("failed to stop launch agent: {error}")))?;
+    Ok(())
+}
+
+fn agent_status() -> Result<bool, CoreError> {
+    let domain = launchctl_domain()?;
+    let output = ProcessCommand::new("launchctl")
+        .args(["print", &format!("{}/{}", domain, AGENT_LABEL)])
+        .output()
+        .map_err(|error| CoreError::runtime(format!("failed to inspect launch agent: {error}")))?;
+    Ok(output.status.success())
+}
+
+fn launchctl_domain() -> Result<String, CoreError> {
+    let output = ProcessCommand::new("id")
+        .arg("-u")
+        .output()
+        .map_err(|error| CoreError::runtime(format!("failed to resolve uid: {error}")))?;
+    if !output.status.success() {
+        return Err(CoreError::runtime("failed to resolve uid".to_string()));
+    }
+    Ok(format!(
+        "gui/{}",
+        String::from_utf8_lossy(&output.stdout).trim()
+    ))
+}
+
+fn agent_plist_path() -> Result<PathBuf, CoreError> {
+    let home = std::env::var("HOME").map_err(|error| {
+        CoreError::runtime(format!("failed to resolve home directory: {error}"))
+    })?;
+    Ok(PathBuf::from(home)
+        .join("Library")
+        .join("LaunchAgents")
+        .join(format!("{AGENT_LABEL}.plist")))
+}
+
+fn write_launch_agent_plist() -> Result<PathBuf, CoreError> {
+    let plist_path = agent_plist_path()?;
+    let executable = std::env::current_exe().map_err(|error| {
+        CoreError::runtime(format!("failed to resolve current executable: {error}"))
+    })?;
+    if let Some(parent) = plist_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            CoreError::runtime(format!("failed to create LaunchAgents directory: {error}"))
+        })?;
+    }
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{exe}</string>
+    <string>agent</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{stdout}</string>
+  <key>StandardErrorPath</key>
+  <string>{stderr}</string>
+</dict>
+</plist>
+"#,
+        label = AGENT_LABEL,
+        exe = xml_escape(&executable.to_string_lossy()),
+        stdout = xml_escape(&agent_stdout_path()?.to_string_lossy()),
+        stderr = xml_escape(&agent_stderr_path()?.to_string_lossy()),
+    );
+    fs::write(&plist_path, plist).map_err(|error| {
+        CoreError::runtime(format!("failed to write launch agent plist: {error}"))
+    })?;
+    Ok(plist_path)
+}
+
+fn agent_stdout_path() -> Result<PathBuf, CoreError> {
+    Ok(LocalAppServerStore::platform_paths()?
+        .working_path
+        .join("logs")
+        .join("scsl-agent.stdout.log"))
+}
+
+fn agent_stderr_path() -> Result<PathBuf, CoreError> {
+    Ok(LocalAppServerStore::platform_paths()?
+        .working_path
+        .join("logs")
+        .join("scsl-agent.stderr.log"))
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn run_background_agent(app: &CliApp) -> Result<Value, CoreError> {
+    let mut agent = BackgroundAgent::new();
+    loop {
+        agent.tick(app)?;
+        thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -1672,11 +1881,318 @@ impl CliApp {
             }
         }
     }
+
+    fn read_agent_schedules(
+        &self,
+        server: &ServerInstance,
+    ) -> Result<Vec<AgentSchedule>, CoreError> {
+        let schedules = self.read_schedules_json(&server.id)?;
+        serde_json::from_str(&schedules)
+            .map_err(|error| CoreError::validation(format!("invalid schedules json: {error}")))
+    }
+
+    fn poll_local_agent_log(
+        &self,
+        server: &ServerInstance,
+        current_file_path: Option<&str>,
+        offset: u64,
+    ) -> Result<scsl_core::LocalLogPollResult, CoreError> {
+        self.local_runtime()?
+            .poll_local_log(server, current_file_path, offset)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSchedule {
+    id: String,
+    #[serde(default)]
+    is_enabled: bool,
+    trigger: AgentScheduleTrigger,
+    action: AgentScheduleAction,
+    #[serde(default)]
+    time: AgentScheduleTime,
+    #[serde(default)]
+    weekdays: Vec<u32>,
+    #[serde(default)]
+    command: String,
+    #[serde(default)]
+    keyword: String,
+    #[serde(default = "default_true")]
+    keyword_ignore_case: bool,
+    #[serde(default)]
+    keyword_is_regex: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum AgentScheduleTrigger {
+    Time,
+    ConsoleKeyword,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum AgentScheduleAction {
+    Start,
+    Stop,
+    Restart,
+    Command,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AgentScheduleTime {
+    #[serde(default)]
+    hour: u32,
+    #[serde(default)]
+    minute: u32,
+}
+
+struct BackgroundAgent {
+    last_minute_token: Option<String>,
+    last_fire_tokens: BTreeMap<String, String>,
+    last_local_log_file_path: BTreeMap<String, String>,
+    last_local_log_offset: BTreeMap<String, u64>,
+    console_buffers: BTreeMap<String, String>,
+    last_console_trigger: BTreeMap<String, Instant>,
+}
+
+impl BackgroundAgent {
+    fn new() -> Self {
+        Self {
+            last_minute_token: None,
+            last_fire_tokens: BTreeMap::new(),
+            last_local_log_file_path: BTreeMap::new(),
+            last_local_log_offset: BTreeMap::new(),
+            console_buffers: BTreeMap::new(),
+            last_console_trigger: BTreeMap::new(),
+        }
+    }
+
+    fn tick(&mut self, app: &CliApp) -> Result<(), CoreError> {
+        let servers = app.core.list_servers()?;
+        self.tick_time_schedules(app, &servers)?;
+        self.tick_console_schedules(app, &servers)?;
+        Ok(())
+    }
+
+    fn tick_time_schedules(
+        &mut self,
+        app: &CliApp,
+        servers: &[ServerInstance],
+    ) -> Result<(), CoreError> {
+        let now = Local::now();
+        let minute_token = format!(
+            "{}-{}-{}-{}-{}",
+            now.year(),
+            now.month(),
+            now.day(),
+            now.hour(),
+            now.minute()
+        );
+        if self.last_minute_token.as_deref() == Some(minute_token.as_str()) {
+            return Ok(());
+        }
+        self.last_minute_token = Some(minute_token.clone());
+        for server in servers.iter().filter(|server| server.is_local()) {
+            for schedule in app.read_agent_schedules(server)? {
+                if !schedule.is_enabled || schedule.trigger != AgentScheduleTrigger::Time {
+                    continue;
+                }
+                if !self.should_fire_time_schedule(&schedule, now) {
+                    continue;
+                }
+                let fire_token = format!("{}-{}", schedule.id, minute_token);
+                if self.last_fire_tokens.get(&schedule.id) == Some(&fire_token) {
+                    continue;
+                }
+                self.last_fire_tokens
+                    .insert(schedule.id.clone(), fire_token);
+                self.execute_schedule(app, server, &schedule, None)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn tick_console_schedules(
+        &mut self,
+        app: &CliApp,
+        servers: &[ServerInstance],
+    ) -> Result<(), CoreError> {
+        for server in servers.iter().filter(|server| server.is_local()) {
+            let schedules = app.read_agent_schedules(server)?;
+            if !schedules.iter().any(|schedule| {
+                schedule.is_enabled && schedule.trigger == AgentScheduleTrigger::ConsoleKeyword
+            }) {
+                continue;
+            }
+            let result = app.poll_local_agent_log(
+                server,
+                self.last_local_log_file_path
+                    .get(&server.id)
+                    .map(String::as_str),
+                *self.last_local_log_offset.get(&server.id).unwrap_or(&0),
+            )?;
+            self.last_local_log_file_path
+                .insert(server.id.clone(), result.file_path.unwrap_or_default());
+            self.last_local_log_offset
+                .insert(server.id.clone(), result.next_offset);
+            if result.appended_text.is_empty() {
+                continue;
+            }
+            let lines = self.consume_console_lines(&server.id, &result.appended_text);
+            for line in lines {
+                let message = extract_server_message(&sanitize_console_line(&line));
+                for schedule in schedules.iter().filter(|schedule| {
+                    schedule.is_enabled && schedule.trigger == AgentScheduleTrigger::ConsoleKeyword
+                }) {
+                    if self.matches_keyword(schedule, &message)? {
+                        self.execute_schedule(app, server, schedule, Some(message.clone()))?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn should_fire_time_schedule(
+        &self,
+        schedule: &AgentSchedule,
+        now: chrono::DateTime<Local>,
+    ) -> bool {
+        if schedule.time.hour != now.hour() || schedule.time.minute != now.minute() {
+            return false;
+        }
+        if schedule.weekdays.is_empty() {
+            return true;
+        }
+        let weekday = match now.weekday() {
+            chrono::Weekday::Sun => 1,
+            chrono::Weekday::Mon => 2,
+            chrono::Weekday::Tue => 3,
+            chrono::Weekday::Wed => 4,
+            chrono::Weekday::Thu => 5,
+            chrono::Weekday::Fri => 6,
+            chrono::Weekday::Sat => 7,
+        };
+        schedule.weekdays.contains(&weekday)
+    }
+
+    fn consume_console_lines(&mut self, server_id: &str, chunk: &str) -> Vec<String> {
+        let buffer = self
+            .console_buffers
+            .entry(server_id.to_string())
+            .or_default();
+        buffer.push_str(chunk);
+        let mut lines = Vec::new();
+        let mut current = String::new();
+        for scalar in buffer.chars() {
+            if scalar == '\n' || scalar == '\r' {
+                if !current.is_empty() {
+                    lines.push(current.clone());
+                    current.clear();
+                }
+            } else {
+                current.push(scalar);
+            }
+        }
+        *buffer = current;
+        lines
+    }
+
+    fn matches_keyword(&self, schedule: &AgentSchedule, line: &str) -> Result<bool, CoreError> {
+        let keyword = schedule.keyword.trim();
+        if keyword.is_empty() {
+            return Ok(false);
+        }
+        if schedule.keyword_is_regex {
+            let regex = if schedule.keyword_ignore_case {
+                Regex::new(&format!("(?i){keyword}"))
+            } else {
+                Regex::new(keyword)
+            }
+            .map_err(|error| CoreError::validation(format!("invalid schedule regex: {error}")))?;
+            return Ok(regex.is_match(line));
+        }
+        if schedule.keyword_ignore_case {
+            Ok(line.to_lowercase().contains(&keyword.to_lowercase()))
+        } else {
+            Ok(line.contains(keyword))
+        }
+    }
+
+    fn execute_schedule(
+        &mut self,
+        app: &CliApp,
+        server: &ServerInstance,
+        schedule: &AgentSchedule,
+        line: Option<String>,
+    ) -> Result<(), CoreError> {
+        if let Some(last) = self.last_console_trigger.get(&schedule.id) {
+            if last.elapsed() < Duration::from_millis(500) {
+                return Ok(());
+            }
+        }
+        match schedule.action {
+            AgentScheduleAction::Start => {
+                let _ = app.core.start_server(&server.id);
+            }
+            AgentScheduleAction::Stop => {
+                let _ = app.core.stop_server(&server.id);
+            }
+            AgentScheduleAction::Restart => {
+                let _ = app.core.restart_server(&server.id);
+            }
+            AgentScheduleAction::Command => {
+                let command = build_agent_schedule_command(schedule, line.as_deref());
+                if !command.is_empty() {
+                    app.send_direct_command(&server.id, &command)?;
+                }
+            }
+        }
+        self.last_console_trigger
+            .insert(schedule.id.clone(), Instant::now());
+        Ok(())
+    }
+}
+
+fn build_agent_schedule_command(schedule: &AgentSchedule, line: Option<&str>) -> String {
+    let mut command = schedule.command.trim().to_string();
+    if let Some(line) = line {
+        command = command.replace("{{line}}", line);
+        command = command.replace("{{raw}}", line);
+        command = command.replace("{{rawLine}}", line);
+    }
+    command.trim().to_string()
+}
+
+fn sanitize_console_line(line: &str) -> String {
+    Regex::new(r"\u{001B}\[[0-9;?]*[ -/]*[@-~]")
+        .ok()
+        .map(|regex| regex.replace_all(line, "").to_string())
+        .unwrap_or_else(|| line.to_string())
+}
+
+fn extract_server_message(line: &str) -> String {
+    for token in ["] [Server] ", "] [Server]: ", "[Server] ", "[Server]: "] {
+        if let Some(index) = line.rfind(token) {
+            let message = line[index + token.len()..].trim();
+            if !message.is_empty() {
+                return message.to_string();
+            }
+        }
+    }
+    line.trim().to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 enum CliServerStore {
     Demo(InMemoryStore),
-    SwiftData(SwiftDataServerStore),
+    SwiftData(LocalAppServerStore),
 }
 
 enum CliServerRuntime {
@@ -2560,6 +3076,307 @@ fn url_encode(value: &str) -> String {
         }
     }
     encoded
+}
+
+#[derive(Serialize, Deserialize)]
+struct ServerAddressEntry {
+    id: String,
+    name: String,
+    address: String,
+    port: i32,
+    hidden: bool,
+    icon: Option<String>,
+    #[serde(rename = "acceptTextures")]
+    accept_textures: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LitematicaMetadataSummary {
+    author: Option<String>,
+    description: Option<String>,
+    version: Option<String>,
+    #[serde(rename = "regionCount")]
+    region_count: Option<i32>,
+    #[serde(rename = "totalBlocks")]
+    total_blocks: Option<i32>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LitematicaFullMetadata {
+    name: String,
+    author: String,
+    description: String,
+    #[serde(rename = "timeCreated")]
+    time_created: i64,
+    #[serde(rename = "timeModified")]
+    time_modified: i64,
+    #[serde(rename = "totalVolume")]
+    total_volume: i32,
+    #[serde(rename = "totalBlocks")]
+    total_blocks: i32,
+    #[serde(rename = "enclosingSize")]
+    enclosing_size: LitematicaSize,
+    #[serde(rename = "regionCount")]
+    region_count: i32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LitematicaSize {
+    x: i32,
+    y: i32,
+    z: i32,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ServerDatRoot {
+    #[serde(default, rename = "servers")]
+    servers: Vec<ServerDatServer>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ServerDatServer {
+    name: String,
+    ip: String,
+    #[serde(default)]
+    hidden: i8,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default, rename = "preventsChatReports")]
+    prevents_chat_reports: i8,
+}
+
+#[derive(Deserialize)]
+struct LitematicaRoot {
+    #[serde(rename = "Metadata")]
+    metadata: LitematicaMetadataNbt,
+}
+
+#[derive(Deserialize)]
+struct LitematicaMetadataNbt {
+    #[serde(rename = "Name")]
+    name: Option<String>,
+    #[serde(rename = "Author")]
+    author: Option<String>,
+    #[serde(rename = "Description")]
+    description: Option<String>,
+    #[serde(rename = "Version")]
+    version: Option<String>,
+    #[serde(rename = "RegionCount")]
+    region_count: Option<NbtNumber>,
+    #[serde(rename = "TotalBlocks")]
+    total_blocks: Option<NbtNumber>,
+    #[serde(rename = "TimeCreated")]
+    time_created: Option<NbtLong>,
+    #[serde(rename = "TimeModified")]
+    time_modified: Option<NbtLong>,
+    #[serde(rename = "TotalVolume")]
+    total_volume: Option<NbtNumber>,
+    #[serde(rename = "EnclosingSize")]
+    enclosing_size: Option<LitematicaSizeNbt>,
+}
+
+#[derive(Deserialize)]
+struct LitematicaSizeNbt {
+    x: NbtNumber,
+    y: NbtNumber,
+    z: NbtNumber,
+}
+
+#[derive(Deserialize, Copy, Clone)]
+#[serde(untagged)]
+enum NbtNumber {
+    I32(i32),
+    I64(i64),
+}
+
+type NbtLong = NbtNumber;
+
+impl NbtNumber {
+    fn as_i32(self) -> i32 {
+        match self {
+            Self::I32(value) => value,
+            Self::I64(value) => value as i32,
+        }
+    }
+
+    fn as_i64(self) -> i64 {
+        match self {
+            Self::I32(value) => i64::from(value),
+            Self::I64(value) => value,
+        }
+    }
+}
+
+fn read_server_addresses(path: &Path) -> Result<Vec<ServerAddressEntry>, CoreError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let data = read_nbt_file(path)?;
+    let root: ServerDatRoot = nbt_from_bytes(&data)
+        .map_err(|error| CoreError::runtime(format!("failed to decode servers.dat: {error}")))?;
+    Ok(root
+        .servers
+        .into_iter()
+        .map(|server| {
+            let (address, port) = parse_server_host_and_port(&server.ip);
+            ServerAddressEntry {
+                id: build_stable_server_id(&server.name, &address, port),
+                name: server.name,
+                address,
+                port,
+                hidden: server.hidden != 0,
+                icon: server.icon,
+                accept_textures: server.prevents_chat_reports != 0,
+            }
+        })
+        .collect())
+}
+
+fn write_server_addresses(path: &Path, json: &str) -> Result<(), CoreError> {
+    let servers: Vec<ServerAddressEntry> = serde_json::from_str(json).map_err(|error| {
+        CoreError::validation(format!("invalid server addresses json: {error}"))
+    })?;
+    let root = ServerDatRoot {
+        servers: servers
+            .into_iter()
+            .map(|server| ServerDatServer {
+                name: server.name,
+                ip: if server.port > 0 {
+                    format!("{}:{}", server.address, server.port)
+                } else {
+                    server.address
+                },
+                hidden: if server.hidden { 1 } else { 0 },
+                icon: server.icon.filter(|value| !value.trim().is_empty()),
+                prevents_chat_reports: if server.accept_textures { 1 } else { 0 },
+            })
+            .collect(),
+    };
+    let encoded = nbt_to_bytes(&root)
+        .map_err(|error| CoreError::runtime(format!("failed to encode servers.dat: {error}")))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            CoreError::runtime(format!("failed to create servers.dat directory: {error}"))
+        })?;
+    }
+    fs::write(path, encoded)
+        .map_err(|error| CoreError::runtime(format!("failed to write servers.dat: {error}")))?;
+    Ok(())
+}
+
+fn read_litematica_metadata(path: &Path, include_full: bool) -> Result<Value, CoreError> {
+    let data = read_nbt_file(path)?;
+    let root: LitematicaRoot = nbt_from_bytes(&data).map_err(|error| {
+        CoreError::runtime(format!("failed to decode litematica metadata: {error}"))
+    })?;
+    if include_full {
+        return serde_json::to_value(LitematicaFullMetadata {
+            name: root
+                .metadata
+                .name
+                .unwrap_or_else(|| default_name_from_path(path)),
+            author: root.metadata.author.unwrap_or_default(),
+            description: root.metadata.description.unwrap_or_default(),
+            time_created: root
+                .metadata
+                .time_created
+                .map(NbtNumber::as_i64)
+                .unwrap_or(0),
+            time_modified: root
+                .metadata
+                .time_modified
+                .map(NbtNumber::as_i64)
+                .unwrap_or(0),
+            total_volume: root
+                .metadata
+                .total_volume
+                .map(NbtNumber::as_i32)
+                .unwrap_or(0),
+            total_blocks: root
+                .metadata
+                .total_blocks
+                .map(NbtNumber::as_i32)
+                .unwrap_or(0),
+            enclosing_size: root
+                .metadata
+                .enclosing_size
+                .map(|size| LitematicaSize {
+                    x: size.x.as_i32(),
+                    y: size.y.as_i32(),
+                    z: size.z.as_i32(),
+                })
+                .unwrap_or(LitematicaSize { x: 0, y: 0, z: 0 }),
+            region_count: root
+                .metadata
+                .region_count
+                .map(NbtNumber::as_i32)
+                .unwrap_or(0),
+        })
+        .map_err(|error| CoreError::runtime(format!("failed to encode metadata: {error}")));
+    }
+    serde_json::to_value(LitematicaMetadataSummary {
+        author: root.metadata.author,
+        description: root.metadata.description,
+        version: root.metadata.version,
+        region_count: root.metadata.region_count.map(NbtNumber::as_i32),
+        total_blocks: root.metadata.total_blocks.map(NbtNumber::as_i32),
+    })
+    .map_err(|error| CoreError::runtime(format!("failed to encode metadata: {error}")))
+}
+
+fn read_nbt_file(path: &Path) -> Result<Vec<u8>, CoreError> {
+    let data = fs::read(path)
+        .map_err(|error| CoreError::runtime(format!("failed to read nbt file: {error}")))?;
+    if data.starts_with(&[0x1f, 0x8b]) {
+        let mut decoder = GzDecoder::new(data.as_slice());
+        let mut decoded = Vec::new();
+        decoder.read_to_end(&mut decoded).map_err(|error| {
+            CoreError::runtime(format!("failed to decompress nbt file: {error}"))
+        })?;
+        Ok(decoded)
+    } else {
+        Ok(data)
+    }
+}
+
+fn parse_server_host_and_port(ip: &str) -> (String, i32) {
+    if let Some((host, port)) = ip.rsplit_once(':')
+        && let Ok(port) = port.parse::<i32>()
+        && port > 0
+    {
+        return (host.to_string(), port);
+    }
+    (ip.to_string(), 0)
+}
+
+fn build_stable_server_id(name: &str, address: &str, port: i32) -> String {
+    let content = format!("{name}|{address}|{port}");
+    let hash = Sha256::digest(content.as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&hash[..16]);
+    bytes[6] = (bytes[6] & 0x0F) | 0x50;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    uuid_bytes_to_string(bytes)
+}
+
+fn uuid_bytes_to_string(bytes: [u8; 16]) -> String {
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        u16::from_be_bytes([bytes[4], bytes[5]]),
+        u16::from_be_bytes([bytes[6], bytes[7]]),
+        u16::from_be_bytes([bytes[8], bytes[9]]),
+        u64::from_be_bytes([
+            0, 0, bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        ])
+    )
+}
+
+fn default_name_from_path(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn build_game_launch_plan(json: &str) -> Result<GameLaunchPlanResponse, CoreError> {
@@ -3505,14 +4322,14 @@ fn write_cli_settings(settings: &CliSettingsFile) -> Result<(), CoreError> {
 }
 
 fn cli_settings_path() -> Result<PathBuf, CoreError> {
-    Ok(SwiftDataServerStore::platform_paths()?
+    Ok(LocalAppServerStore::platform_paths()?
         .working_path
         .join("data")
         .join("settings.json"))
 }
 
 fn legacy_cli_settings_path() -> Result<PathBuf, CoreError> {
-    Ok(SwiftDataServerStore::platform_paths()?
+    Ok(LocalAppServerStore::platform_paths()?
         .working_path
         .join("data")
         .join("cli_settings.json"))

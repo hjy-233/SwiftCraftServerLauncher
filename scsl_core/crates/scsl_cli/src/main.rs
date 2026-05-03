@@ -3,8 +3,8 @@ mod args;
 mod json;
 mod response;
 
-use crate::app::{build_app, run_command};
-use crate::args::Cli;
+use crate::app::{build_app, ensure_background_agent, run_command};
+use crate::args::{Cli, Command};
 use crate::json::{print_error, print_success};
 use std::process::ExitCode;
 
@@ -16,6 +16,10 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+
+    if !matches!(cli.command, Command::Agent(_)) {
+        let _ = ensure_background_agent(&cli);
+    }
 
     let app = match build_app(&cli) {
         Ok(app) => app,

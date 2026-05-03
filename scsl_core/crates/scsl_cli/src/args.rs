@@ -15,6 +15,15 @@ pub enum Command {
     Resource(ResourceCommand),
     Game(GameCommand),
     Settings(SettingsCommand),
+    Agent(AgentCommand),
+}
+
+pub enum AgentCommand {
+    Run,
+    Status,
+    Start,
+    Stop,
+    Ensure,
 }
 
 pub enum SettingsCommand {
@@ -100,6 +109,10 @@ pub enum ResourceCommand {
 
 pub enum GameCommand {
     LaunchPlan(GameLaunchPlanArgs),
+    ServerAddressesRead(GamePathArgs),
+    ServerAddressesWrite(GamePathArgs),
+    LitematicaMetadata(GamePathArgs),
+    LitematicaFullMetadata(GamePathArgs),
     MavenRelativePath(GameMavenCoordinateArgs),
     MavenPath(GameMavenPathArgs),
     LoaderClasspath(GameLoaderClasspathArgs),
@@ -216,6 +229,10 @@ pub struct GameLaunchPlanArgs {
 
 pub struct GameMavenCoordinateArgs {
     pub coordinate: String,
+}
+
+pub struct GamePathArgs {
+    pub path: String,
 }
 
 pub struct GameMavenPathArgs {
@@ -451,6 +468,7 @@ impl Cli {
             "resource" => Command::Resource(parse_resource_command(&mut parser)?),
             "game" => Command::Game(parse_game_command(&mut parser)?),
             "settings" => Command::Settings(parse_settings_command(&mut parser)?),
+            "agent" => Command::Agent(parse_agent_command(&mut parser)?),
             other => return Err(CoreError::validation(format!("unknown command: {other}"))),
         };
 
@@ -933,6 +951,18 @@ fn parse_game_command(parser: &mut ArgCursor) -> Result<GameCommand, CoreError> 
         "launch-plan" => Ok(GameCommand::LaunchPlan(GameLaunchPlanArgs {
             json: parser.required_flag_value("--json")?,
         })),
+        "server-addresses-read" => Ok(GameCommand::ServerAddressesRead(GamePathArgs {
+            path: parser.required_flag_value("--path")?,
+        })),
+        "server-addresses-write" => Ok(GameCommand::ServerAddressesWrite(GamePathArgs {
+            path: parser.required_flag_value("--path")?,
+        })),
+        "litematica-metadata" => Ok(GameCommand::LitematicaMetadata(GamePathArgs {
+            path: parser.required_flag_value("--path")?,
+        })),
+        "litematica-full-metadata" => Ok(GameCommand::LitematicaFullMetadata(GamePathArgs {
+            path: parser.required_flag_value("--path")?,
+        })),
         "maven-relative-path" => Ok(GameCommand::MavenRelativePath(GameMavenCoordinateArgs {
             coordinate: parser.required("coordinate")?,
         })),
@@ -1034,6 +1064,20 @@ fn parse_settings_command(parser: &mut ArgCursor) -> Result<SettingsCommand, Cor
         })),
         other => Err(CoreError::validation(format!(
             "unknown settings command: {other}"
+        ))),
+    }
+}
+
+fn parse_agent_command(parser: &mut ArgCursor) -> Result<AgentCommand, CoreError> {
+    let command = parser.required("agent command")?;
+    match command.as_str() {
+        "run" => Ok(AgentCommand::Run),
+        "status" => Ok(AgentCommand::Status),
+        "start" => Ok(AgentCommand::Start),
+        "stop" => Ok(AgentCommand::Stop),
+        "ensure" => Ok(AgentCommand::Ensure),
+        other => Err(CoreError::validation(format!(
+            "unknown agent command: {other}"
         ))),
     }
 }

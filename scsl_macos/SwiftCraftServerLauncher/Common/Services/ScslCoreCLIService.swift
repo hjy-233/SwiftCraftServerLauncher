@@ -2,6 +2,7 @@ import Foundation
 
 enum ScslCoreCLIError: LocalizedError {
     case sourceRootMissing
+    case bundledBinaryMissing
     case buildFailed(String)
     case executionFailed(String)
     case invalidUTF8
@@ -10,6 +11,8 @@ enum ScslCoreCLIError: LocalizedError {
         switch self {
         case .sourceRootMissing:
             return "未找到 scsl_core 工程目录"
+        case .bundledBinaryMissing:
+            return "未找到内置 scsl CLI"
         case .buildFailed(let detail):
             return "构建 scsl_cli 失败: \(detail)"
         case .executionFailed(let detail):
@@ -25,6 +28,8 @@ actor ScslCoreCLIService {
 
     private let fileManager = FileManager.default
     private var didEnsureBinary = false
+    private var resolvedBinaryURL: URL?
+    private let appName = "SwiftCraftServerLauncher"
 
     private init() {}
 
@@ -41,7 +46,9 @@ actor ScslCoreCLIService {
         standardInput: String? = nil
     ) async throws -> ScslCoreCLIEnvelope<T> {
         try await ensureBinary()
-        let binaryURL = try cliBinaryURL()
+        guard let binaryURL = resolvedBinaryURL else {
+            throw ScslCoreCLIError.executionFailed("未解析到可用的 scsl CLI")
+        }
         let result = try await runProcess(
             executableURL: binaryURL,
             arguments: arguments,
@@ -66,11 +73,19 @@ actor ScslCoreCLIService {
     }
 
     private func ensureBinary() async throws {
-        if didEnsureBinary {
+        if didEnsureBinary,
+           let resolvedBinaryURL,
+           fileManager.fileExists(atPath: resolvedBinaryURL.path) {
             return
         }
 
-        let binaryURL = try cliBinaryURL()
+        if let bundledBinaryURL = bundledBinaryURL() {
+            resolvedBinaryURL = try syncBundledBinaryIfNeeded(from: bundledBinaryURL)
+            didEnsureBinary = true
+            return
+        }
+
+        let binaryURL = try developmentBinaryURL()
         if !fileManager.fileExists(atPath: binaryURL.path) {
             let manifestPath = try cargoManifestURL().path
             let result = try await runProcess(
@@ -83,6 +98,7 @@ actor ScslCoreCLIService {
             }
         }
 
+        resolvedBinaryURL = binaryURL
         didEnsureBinary = true
     }
 
@@ -92,7 +108,7 @@ actor ScslCoreCLIService {
             .appendingPathComponent("Cargo.toml", isDirectory: false)
     }
 
-    private func cliBinaryURL() throws -> URL {
+    private func developmentBinaryURL() throws -> URL {
         let root = try sourceRootURL()
         return root.appendingPathComponent("scsl_core", isDirectory: true)
             .appendingPathComponent("target", isDirectory: true)
@@ -118,6 +134,78 @@ actor ScslCoreCLIService {
         return root
     }
 
+    private func bundledBinaryURL() -> URL? {
+        Bundle.main.url(forResource: "scsl", withExtension: nil, subdirectory: "cli")
+    }
+
+    private func managedBinaryURL() -> URL? {
+        guard let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return applicationSupport
+            .appendingPathComponent(appName, isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("scsl", isDirectory: false)
+    }
+
+    private func managedBinaryVersionURL() -> URL? {
+        managedBinaryURL()?.deletingLastPathComponent().appendingPathComponent("scsl.version", isDirectory: false)
+    }
+
+    private func expectedBundledVersion() -> String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let shortVersion = info["CFBundleShortVersionString"] as? String ?? "0"
+        let buildVersion = info["CFBundleVersion"] as? String ?? "0"
+        return "\(shortVersion)+\(buildVersion)"
+    }
+
+    private func syncBundledBinaryIfNeeded(from bundledBinaryURL: URL) throws -> URL {
+        guard let managedBinaryURL = managedBinaryURL(),
+              let managedBinaryVersionURL = managedBinaryVersionURL() else {
+            throw ScslCoreCLIError.bundledBinaryMissing
+        }
+
+        let expectedVersion = expectedBundledVersion()
+        let currentVersion = try? String(contentsOf: managedBinaryVersionURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if fileManager.fileExists(atPath: managedBinaryURL.path),
+           currentVersion == expectedVersion,
+           managedBinaryMatchesBundled(managedBinaryURL: managedBinaryURL, bundledBinaryURL: bundledBinaryURL) {
+            return managedBinaryURL
+        }
+
+        try fileManager.createDirectory(
+            at: managedBinaryURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        if fileManager.fileExists(atPath: managedBinaryURL.path) {
+            try fileManager.removeItem(at: managedBinaryURL)
+        }
+        try fileManager.copyItem(at: bundledBinaryURL, to: managedBinaryURL)
+        try setExecutableIfNeeded(at: managedBinaryURL)
+        try expectedVersion.write(to: managedBinaryVersionURL, atomically: true, encoding: .utf8)
+        return managedBinaryURL
+    }
+
+    private func managedBinaryMatchesBundled(managedBinaryURL: URL, bundledBinaryURL: URL) -> Bool {
+        guard let managedAttributes = try? fileManager.attributesOfItem(atPath: managedBinaryURL.path),
+              let bundledAttributes = try? fileManager.attributesOfItem(atPath: bundledBinaryURL.path),
+              let managedSize = managedAttributes[.size] as? NSNumber,
+              let bundledSize = bundledAttributes[.size] as? NSNumber,
+              managedSize == bundledSize,
+              let managedData = try? Data(contentsOf: managedBinaryURL),
+              let bundledData = try? Data(contentsOf: bundledBinaryURL) else {
+            return false
+        }
+        return managedData == bundledData
+    }
+
+    private func setExecutableIfNeeded(at url: URL) throws {
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
     private func runProcess(
         executableURL: URL,
         arguments: [String],
@@ -127,6 +215,10 @@ actor ScslCoreCLIService {
             let process = Process()
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var stdoutData = Data()
+            var stderrData = Data()
 
             process.executableURL = executableURL
             process.arguments = arguments
@@ -140,18 +232,37 @@ actor ScslCoreCLIService {
                 try? stdinPipe.fileHandleForWriting.close()
             }
 
-            process.terminationHandler = { process in
-                let stdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                continuation.resume(returning: ProcessResult(
-                    status: process.terminationStatus,
-                    stdout: stdout,
-                    stderr: stderr
-                ))
-            }
-
             do {
                 try process.run()
+                group.enter()
+                DispatchQueue.global(qos: .utility).async {
+                    let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    lock.lock()
+                    stdoutData = data
+                    lock.unlock()
+                    group.leave()
+                }
+                group.enter()
+                DispatchQueue.global(qos: .utility).async {
+                    let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    lock.lock()
+                    stderrData = data
+                    lock.unlock()
+                    group.leave()
+                }
+                DispatchQueue.global(qos: .utility).async {
+                    process.waitUntilExit()
+                    group.wait()
+                    lock.lock()
+                    let stdout = stdoutData
+                    let stderr = stderrData
+                    lock.unlock()
+                    continuation.resume(returning: ProcessResult(
+                        status: process.terminationStatus,
+                        stdout: stdout,
+                        stderr: stderr
+                    ))
+                }
             } catch {
                 continuation.resume(throwing: error)
             }

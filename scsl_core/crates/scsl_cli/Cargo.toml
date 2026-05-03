@@ -10,6 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 scsl_core = { path = "../scsl_core" }
+flate2 = "1.1.4"
+fastnbt = "2.6.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+sha2 = "0.10.9"
+chrono = { version = "0.4.42", features = ["clock"] }
+regex = "1.12.2"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
