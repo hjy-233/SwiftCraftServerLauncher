@@ -24,4 +24,6 @@ pub use scsl_core_mirror::{
 };
 pub use scsl_core_ports::{ServerRuntimePort, ServerStorePort};
 pub use scsl_core_service::ScslCore;
-pub use scsl_core_swiftdata::SwiftDataServerStore;
+pub use scsl_core_store_local::{
+    LocalAppPaths, LocalAppServerStore, SwiftDataPaths, SwiftDataServerStore,
+};

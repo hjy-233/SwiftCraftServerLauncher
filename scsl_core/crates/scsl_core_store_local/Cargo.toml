@@ -1,11 +1,11 @@
 [package]
-name = "scsl_core_swiftdata"
+name = "scsl_core_store_local"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
 
 [lib]
-name = "scsl_core_swiftdata"
+name = "scsl_core_store_local"
 path = "src/lib.rs"
 
 [dependencies]

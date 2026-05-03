@@ -1,4 +1,5 @@
 # scsl_core Workspace
+先用ai写了一版,等会再写一遍
 
 This directory hosts the cross-platform runtime that will gradually take over
 server-management business logic from the SwiftUI app in `../scsl_macos`.
@@ -27,7 +28,7 @@ scsl_core/
     scsl_core_ports/     # store/runtime ports
     scsl_core_service/   # application service / use cases
     scsl_core_inmemory/  # demo in-memory adapters
-    scsl_core_swiftdata/ # adapter for the Swift app's server_instances table
+    scsl_core_store_local/ # local app-data adapter for the server_instances table
     scsl_core/           # facade crate re-exporting the split core
     scsl_cli/            # command-line entrypoint
     scsl_agent/  # future local agent / service entrypoint
