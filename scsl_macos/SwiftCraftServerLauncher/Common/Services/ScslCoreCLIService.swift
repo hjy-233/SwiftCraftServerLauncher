@@ -65,6 +65,29 @@ actor ScslCoreCLIService {
         }
 
         let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateString = try container.decode(String.self)
+
+            let formatterWithFractionalSeconds = ISO8601DateFormatter()
+            formatterWithFractionalSeconds.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            formatterWithFractionalSeconds.timeZone = TimeZone(secondsFromGMT: 0)
+            if let date = formatterWithFractionalSeconds.date(from: dateString) {
+                return date
+            }
+
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime]
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            if let date = formatter.date(from: dateString) {
+                return date
+            }
+
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid ISO8601 date: \(dateString)"
+            )
+        }
         let envelope = try decoder.decode(ScslCoreCLIEnvelope<T>.self, from: data)
         guard result.status == 0 else {
             throw ScslCoreCLIError.executionFailed(envelope.error?.message ?? "无输出")

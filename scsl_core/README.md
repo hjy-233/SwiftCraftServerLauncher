@@ -1,64 +1,53 @@
 # scsl_core Workspace
-先用ai写了一版,等会再写一遍
 
-This directory hosts the cross-platform runtime that will gradually take over
-server-management business logic from the SwiftUI app in `../scsl_macos`.
+`scsl_core` 是 SwiftCraftServerLauncher 的 Rust workspace
 
-## Current Scope
+主要功能:
 
-The first phase is intentionally narrow:
+- 本地服务器管理 core
+- `scsl` CLI
+- 本地后台 agent
+- 给 macOS app 复用的持久化 / 启动 / 下载 / 日志能力
 
-- Build a reusable `scsl_core` facade crate
-- Keep the focus on local server-management workflows
-- Define stable domain models, errors, and ports for future adapters
-- Prove the core can run without any UI dependencies
-
-Remote-node support is not part of this first Rust step. Once the local core
-is stable, additional crates can be added here without changing the workspace
-layout.
-
-## Planned Layout
-
-```text
-scsl_core/
-  crates/
-    scsl_core_domain/    # domain models + errors
-    scsl_core_inventory/ # post-load server dedupe + corrupted-directory detection
-    scsl_core_launch/    # server launch planning + direct-mode scripts
-    scsl_core_ports/     # store/runtime ports
-    scsl_core_service/   # application service / use cases
-    scsl_core_inmemory/  # demo in-memory adapters
-    scsl_core_store_local/ # local app-data adapter for the server_instances table
-    scsl_core/           # facade crate re-exporting the split core
-    scsl_cli/            # command-line entrypoint
-    scsl_agent/  # future local agent / service entrypoint
-```
-
-## CLI Against Swift Data
-
-The CLI uses the Swift app's default Application Support data automatically:
+## 构建
 
 ```sh
-cargo run -p scsl_cli -- server list
-cargo run -p scsl_cli -- server show <server-id>
-cargo run -p scsl_cli -- server command <server-id>
-cargo run -p scsl_cli -- server corrupted
-cargo run -p scsl_cli -- server status <server-id>
-cargo run -p scsl_cli -- server logs <server-id> -n 50
+cargo build --manifest-path scsl_core/Cargo.toml -p scsl_cli
 ```
 
-Custom database and working-path overrides are still available:
+调试版产物：
+
+```dir
+scsl_core/target/debug/scsl
+```
+
+可发布产物：
 
 ```sh
-cargo run -p scsl_cli -- --db /path/to/data.db --working-path /path/to/working-dir server list
+cargo build --manifest-path scsl_core/Cargo.toml -p scsl_cli --release
 ```
 
-Local `start`, `stop`, and `restart` use the same `.scsl.pid`,
-`.scsl.stdin`, and `scsl-server.log` files as the Swift app's direct local
-server mode. Launch command generation lives in `scsl_core_launch`, including
-JVM memory arguments, quoted JVM argument splitting, custom commands with
-`nogui`, and Forge `run.sh` / `unix_args.txt` / server-jar detection.
+```dir
+scsl_core/target/release/scsl
+```
 
-Loaded server lists are normalized through `scsl_core_inventory`, matching the
-Swift repository behavior for duplicate `(nodeId, name)` records and missing
-local server directories.
+## 数据目录
+
+默认会自动使用应用数据目录：
+
+- macOS: `~/Library/Application Support/SwiftCraftServerLauncher`
+- Windows: `%APPDATA%/SwiftCraftServerLauncher`
+- Linux: `$XDG_DATA_HOME/SwiftCraftServerLauncher` 或 `~/.local/share/SwiftCraftServerLauncher`
+
+也可以覆盖：
+
+```sh
+scsl --db /path/to/data.db --working-path /path/to/working-dir server list
+```
+
+## CLI 文档
+
+完整命令文档见：
+
+- [scsl_cli.md](./docs/scsl_cli.md)
+

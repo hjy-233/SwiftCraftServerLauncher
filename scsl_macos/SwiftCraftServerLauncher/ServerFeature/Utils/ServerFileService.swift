@@ -67,6 +67,12 @@ private struct LocalServerFileEntry: Decodable {
     let relativePath: String
     let isDirectory: Bool
     let fileSize: UInt64?
+
+    private enum CodingKeys: String, CodingKey {
+        case relativePath = "relative_path"
+        case isDirectory = "is_directory"
+        case fileSize = "file_size"
+    }
 }
 
 private struct ServerFileReadResponse: Decodable {

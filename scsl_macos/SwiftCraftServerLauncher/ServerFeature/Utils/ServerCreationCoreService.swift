@@ -36,7 +36,7 @@ struct LocalServerCreateRequest: Encodable {
 
 enum LocalServerCreateSource: Encodable {
     case customJar(sourcePath: String)
-    case download(url: String, fileName: String, sha1: String?)
+    case download(url: String, fileName: String, sha1: String?, headers: [String: String]?)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -44,6 +44,7 @@ enum LocalServerCreateSource: Encodable {
         case url
         case fileName
         case sha1
+        case headers
     }
 
     private enum SourceType: String, Encodable {
@@ -57,11 +58,12 @@ enum LocalServerCreateSource: Encodable {
         case .customJar(let sourcePath):
             try container.encode(SourceType.customJar, forKey: .type)
             try container.encode(sourcePath, forKey: .sourcePath)
-        case let .download(url, fileName, sha1):
+        case let .download(url, fileName, sha1, headers):
             try container.encode(SourceType.download, forKey: .type)
             try container.encode(url, forKey: .url)
             try container.encode(fileName, forKey: .fileName)
             try container.encodeIfPresent(sha1, forKey: .sha1)
+            try container.encodeIfPresent(headers, forKey: .headers)
         }
     }
 }

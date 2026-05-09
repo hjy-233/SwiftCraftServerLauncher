@@ -170,7 +170,9 @@ class ServerCreationViewModel: ObservableObject {
             return name
         }()
 
+        var shouldCleanupServerDirectory = true
         do {
+            Logger.shared.debug("建服开始: name=\(name) type=\(selectedServerType.rawValue) mirror=\(selectedMirrorSource.rawValue)")
             guard selectedNode.isLocal else {
                 throw GlobalError.validation(
                     chineseMessage: "远程节点建服功能已停用，请使用本地节点",
@@ -188,30 +190,45 @@ class ServerCreationViewModel: ObservableObject {
                 self.updateParentState()
             }
 
-            let iconImageFileName: String?
-            let serverDir = try serverSetupService.createServerDirectory(name: directoryName)
-            iconImageFileName = try persistServerIconIfNeeded(serverName: name, baseDirectory: serverDir)
+            let iconImageFileName = plannedServerIconFileName()
+            Logger.shared.debug("建服准备请求: directory=\(directoryName) icon=\(iconImageFileName ?? "nil")")
             let creation = try await createLocalServer(
                 serverUUID: serverUUID,
                 name: name,
                 directoryName: directoryName,
                 iconImageFileName: iconImageFileName
             )
+            Logger.shared.debug("建服 CLI 返回: id=\(creation.id) dir=\(creation.directoryName) jar=\(creation.serverJar)")
+            shouldCleanupServerDirectory = false
+            try persistServerIconIfNeeded(
+                baseDirectory: AppPaths.serverDirectory(serverName: creation.directoryName),
+                fileName: iconImageFileName
+            )
             Logger.shared.info("本地服务器创建完成: \(creation.id) / \(creation.serverJar)")
 
             serverRepository.reloadServers()
         } catch {
+            Logger.shared.error("建服失败: \(error.localizedDescription)")
             let serverDir = AppPaths.serverDirectory(serverName: directoryName)
-            if FileManager.default.fileExists(atPath: serverDir.path) {
+            if FileManager.default.fileExists(atPath: serverDir.path),
+               shouldCleanupServerDirectory {
                 try? FileManager.default.removeItem(at: serverDir)
             }
             GlobalErrorHandler.shared.handle(error)
         }
     }
 
-    private func persistServerIconIfNeeded(serverName: String, baseDirectory: URL) throws -> String? {
+    private func plannedServerIconFileName() -> String? {
         guard let selectedServerIconURL else {
             return nil
+        }
+        let ext = selectedServerIconURL.pathExtension.isEmpty ? "png" : selectedServerIconURL.pathExtension.lowercased()
+        return ".scsl-server-icon.\(ext)"
+    }
+
+    private func persistServerIconIfNeeded(baseDirectory: URL, fileName: String?) throws {
+        guard let selectedServerIconURL, let fileName else {
+            return
         }
         let didAccessSecurityScoped = selectedServerIconURL.startAccessingSecurityScopedResource()
         defer {
@@ -220,14 +237,11 @@ class ServerCreationViewModel: ObservableObject {
             }
         }
 
-        let ext = selectedServerIconURL.pathExtension.isEmpty ? "png" : selectedServerIconURL.pathExtension.lowercased()
-        let fileName = ".scsl-server-icon.\(ext)"
         let destination = baseDirectory.appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: destination.path) {
             try? FileManager.default.removeItem(at: destination)
         }
         try FileManager.default.copyItem(at: selectedServerIconURL, to: destination)
-        return fileName
     }
 
     private func createLocalServer(
@@ -258,6 +272,7 @@ class ServerCreationViewModel: ObservableObject {
             acceptEula: hasAcceptedEula,
             source: source
         )
+        Logger.shared.debug("建服请求编码前: javaPath=\(javaPath) gameVersion=\(selectedGameVersion) loader=\(selectedLoaderVersion)")
         return try await ServerCreationCoreService.createLocal(request: request)
     }
 
@@ -278,7 +293,8 @@ class ServerCreationViewModel: ObservableObject {
             return .download(
                 url: selectedMirrorDownloadURL,
                 fileName: selectedMirrorFileName,
-                sha1: nil
+                sha1: nil,
+                headers: nil
             )
         }
 
@@ -297,7 +313,8 @@ class ServerCreationViewModel: ObservableObject {
         return .download(
             url: target.url.absoluteString,
             fileName: target.fileName,
-            sha1: target.sha1
+            sha1: target.sha1,
+            headers: target.headers
         )
     }
 

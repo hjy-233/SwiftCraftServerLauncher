@@ -88,8 +88,14 @@ struct ServerConsoleView: View {
             if isRemoteServer {
                 consoleEvent = event
             } else {
-                initialConsoleLines = console.logLines(for: server.id)
-                consoleEvent = nil
+                guard event.kind == .append else { return }
+                let appended = event.text.trimmingCharacters(in: .newlines)
+                guard appended.hasPrefix("[SCSL]"), !appended.isEmpty else { return }
+                let appendedLines = appended.components(separatedBy: .newlines)
+                initialConsoleLines.append(contentsOf: appendedLines)
+                if initialConsoleLines.count > 2_000 {
+                    initialConsoleLines = Array(initialConsoleLines.suffix(2_000))
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .serverDetailToolbarAction)) { note in

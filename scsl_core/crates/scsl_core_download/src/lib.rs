@@ -133,7 +133,12 @@ impl ResourceDownloadPlanner {
         target: &DownloadTarget,
     ) -> Result<PathBuf, CoreError> {
         let destination = self.resource_destination(game_name, resource_type, &target.file_name)?;
-        download_file_to_path(&target.url, &destination, target.sha1.as_deref())
+        download_file_to_path(
+            &target.url,
+            &destination,
+            target.sha1.as_deref(),
+            Some(&target.headers),
+        )
     }
 }
 
@@ -257,6 +262,7 @@ pub fn download_file_to_path(
     url: &str,
     destination: impl AsRef<Path>,
     expected_sha1: Option<&str>,
+    headers: Option<&BTreeMap<String, String>>,
 ) -> Result<PathBuf, CoreError> {
     if !is_http_url(url) {
         return Err(CoreError::validation("invalid download url"));
@@ -281,13 +287,20 @@ pub fn download_file_to_path(
         let _ = fs::remove_file(&temp_path);
     }
 
-    let output = Command::new("curl")
+    let mut command = Command::new("curl");
+    command
         .arg("-L")
         .arg("--fail")
         .arg("--silent")
         .arg("--show-error")
         .arg("--output")
-        .arg(&temp_path)
+        .arg(&temp_path);
+    if let Some(headers) = headers {
+        for (name, value) in headers {
+            command.arg("-H").arg(format!("{name}: {value}"));
+        }
+    }
+    let output = command
         .arg(url)
         .output()
         .map_err(|error| CoreError::runtime(format!("failed to spawn curl: {error}")))?;

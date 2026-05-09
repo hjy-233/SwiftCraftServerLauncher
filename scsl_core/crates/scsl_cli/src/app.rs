@@ -566,15 +566,20 @@ struct ServerCreateRequest {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type")]
 enum ServerCreateSource {
+    #[serde(rename = "customJar", alias = "CustomJar")]
     CustomJar {
+        #[serde(alias = "sourcePath")]
         source_path: String,
     },
+    #[serde(rename = "download", alias = "Download")]
     Download {
         url: String,
+        #[serde(alias = "fileName")]
         file_name: String,
         sha1: Option<String>,
+        headers: Option<BTreeMap<String, String>>,
     },
 }
 
@@ -1136,7 +1141,7 @@ impl CliApp {
         })?;
         let server = self.server_from_create_request(&request)?;
         let server_dir = self.download_planner.server_dir(&server);
-        if server_dir.exists() {
+        if server_dir.exists() && !self.is_precreated_server_directory_allowed(&server_dir)? {
             return Err(CoreError::validation(format!(
                 "server directory already exists: {}",
                 server.directory_name
@@ -1156,11 +1161,17 @@ impl CliApp {
                     url,
                     file_name,
                     sha1,
+                    headers,
                 } => {
                     let target = mirror_direct_target(file_name.clone(), url.clone())?;
                     let destination = server_dir.join(&target.file_name);
                     let downloaded =
-                        download_file_to_path(&target.url, &destination, sha1.as_deref())?;
+                        download_file_to_path(
+                            &target.url,
+                            &destination,
+                            sha1.as_deref(),
+                            headers.as_ref(),
+                        )?;
                     self.materialize_server_artifact(&downloaded, &server_dir)?
                 }
             };
@@ -1188,6 +1199,22 @@ impl CliApp {
             let _ = remove_path_if_exists(&server_dir);
         }
         result
+    }
+
+    fn is_precreated_server_directory_allowed(&self, server_dir: &Path) -> Result<bool, CoreError> {
+        let entries = fs::read_dir(server_dir)
+            .map_err(|error| CoreError::runtime(format!("failed to inspect server directory: {error}")))?;
+        for entry in entries {
+            let entry = entry
+                .map_err(|error| CoreError::runtime(format!("failed to inspect server directory entry: {error}")))?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(".scsl-server-icon.") {
+                continue;
+            }
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     fn resolve_server_download_target(
