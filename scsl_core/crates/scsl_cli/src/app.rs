@@ -1165,13 +1165,12 @@ impl CliApp {
                 } => {
                     let target = mirror_direct_target(file_name.clone(), url.clone())?;
                     let destination = server_dir.join(&target.file_name);
-                    let downloaded =
-                        download_file_to_path(
-                            &target.url,
-                            &destination,
-                            sha1.as_deref(),
-                            headers.as_ref(),
-                        )?;
+                    let downloaded = download_file_to_path(
+                        &target.url,
+                        &destination,
+                        sha1.as_deref(),
+                        headers.as_ref(),
+                    )?;
                     self.materialize_server_artifact(&downloaded, &server_dir)?
                 }
             };
@@ -1202,11 +1201,13 @@ impl CliApp {
     }
 
     fn is_precreated_server_directory_allowed(&self, server_dir: &Path) -> Result<bool, CoreError> {
-        let entries = fs::read_dir(server_dir)
-            .map_err(|error| CoreError::runtime(format!("failed to inspect server directory: {error}")))?;
+        let entries = fs::read_dir(server_dir).map_err(|error| {
+            CoreError::runtime(format!("failed to inspect server directory: {error}"))
+        })?;
         for entry in entries {
-            let entry = entry
-                .map_err(|error| CoreError::runtime(format!("failed to inspect server directory entry: {error}")))?;
+            let entry = entry.map_err(|error| {
+                CoreError::runtime(format!("failed to inspect server directory entry: {error}"))
+            })?;
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if name.starts_with(".scsl-server-icon.") {
