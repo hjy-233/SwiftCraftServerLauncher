@@ -4,7 +4,6 @@ import SwiftUI
 enum WindowID: String {
     case about = "about"
     case contributors = "contributors"
-    case downloadCenter = "downloadCenter"
     case serverDetail = "serverDetail"
 }
 

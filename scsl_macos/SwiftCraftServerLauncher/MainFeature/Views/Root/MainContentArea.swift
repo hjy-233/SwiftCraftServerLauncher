@@ -265,17 +265,6 @@ struct MainContentArea: View {
             )
         )
 
-        nodes.append(
-            CommandPaletteNode(
-                id: "downloadCenter",
-                title: "command.palette.action.download_center".localized(),
-                subtitle: nil,
-                systemImage: "arrow.down.circle"
-            ) {
-                WindowManager.shared.openWindow(id: .downloadCenter)
-            }
-        )
-
         let resourceTypes: [ResourceType] = [.mod, .plugin]
         let resourceChildren: [CommandPaletteNode] = resourceTypes.map { type in
             CommandPaletteNode(

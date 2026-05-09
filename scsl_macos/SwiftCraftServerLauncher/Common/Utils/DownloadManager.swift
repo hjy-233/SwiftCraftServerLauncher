@@ -91,11 +91,6 @@ enum DownloadManager {
     private static let githubHost = "github.com"
     private static let rawGithubHost = "raw.githubusercontent.com"
 
-    private struct TrackingInfo {
-        let title: String
-        let iconSystemName: String
-    }
-
     private struct ResourceDownloadCLIResponse: Decodable {
         let path: String
     }
@@ -103,10 +98,6 @@ enum DownloadManager {
     private struct GenericDownloadCLIResponse: Decodable {
         let path: String
     }
-
-    private static var activeSessions: [UUID: URLSession] = [:]
-    private static var activeDelegates: [UUID: DownloadProgressDelegate] = [:]
-    private static let activeSessionsLock = NSLock()
 
     private static func persistTemporaryFile(_ url: URL) throws -> URL {
         let fileManager = FileManager.default
@@ -121,32 +112,6 @@ enum DownloadManager {
             try fileManager.copyItem(at: url, to: destination)
             return destination
         }
-    }
-
-    private static func trackingInfo(for destinationURL: URL) -> TrackingInfo? {
-        let path = destinationURL.path.lowercased()
-        let fileName = destinationURL.lastPathComponent
-
-        if path.contains("/\(AppConstants.DirectoryNames.plugins)/") {
-            return TrackingInfo(title: fileName, iconSystemName: "powerplug")
-        }
-        if path.contains("/\(AppConstants.DirectoryNames.mods)/") {
-            return TrackingInfo(title: fileName, iconSystemName: "puzzlepiece.extension")
-        }
-        if path.contains("/\(AppConstants.DirectoryNames.datapacks)/") {
-            return TrackingInfo(title: fileName, iconSystemName: "doc.on.doc")
-        }
-        if path.contains("/\(AppConstants.DirectoryNames.shaderpacks)/") {
-            return TrackingInfo(title: fileName, iconSystemName: "sparkles")
-        }
-        if path.contains("/\(AppConstants.DirectoryNames.resourcepacks)/") {
-            return TrackingInfo(title: fileName, iconSystemName: "photo.stack")
-        }
-        if path.contains("/\(AppConstants.DirectoryNames.servers)/"),
-           destinationURL.pathExtension.lowercased() == AppConstants.FileExtensions.jar {
-            return TrackingInfo(title: "服务器核心: \(fileName)", iconSystemName: "server.rack")
-        }
-        return nil
     }
 
     /// 通用下载文件到指定路径（不做任何目录结构拼接）
@@ -278,97 +243,20 @@ enum DownloadManager {
         )
     }
 
-    fileprivate final class DownloadProgressDelegate: NSObject {
-        private let progressHandler: (Int64, Int64) -> Void
-        private let completion: (Result<(URL, URLResponse), Error>) -> Void
-        private var tempFileURL: URL?
-        private var tempFileError: Error?
-        private var didComplete = false
-
-        init(
-            progressHandler: @escaping (Int64, Int64) -> Void,
-            completion: @escaping (Result<(URL, URLResponse), Error>) -> Void
-        ) {
-            self.progressHandler = progressHandler
-            self.completion = completion
-        }
-    }
-
     private static func downloadWithProgress(
         request: URLRequest,
-        trackingId: UUID?
+        trackingId _: UUID?
     ) async throws -> (URL, URLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
-            var session: URLSession?
-            var task: URLSessionDownloadTask?
-            let sessionId = UUID()
-            let delegate = DownloadProgressDelegate(
-                progressHandler: { received, expected in
-                    guard let trackingId else { return }
-                    let progress: Double?
-                    if expected > 0 {
-                        progress = max(0, min(1, Double(received) / Double(expected)))
-                    } else {
-                        progress = nil
-                    }
-                    Task { @MainActor in
-                        DownloadCenter.shared.updateProgress(id: trackingId, progress: progress)
-                    }
-                },
-                completion: { result in
-                    activeSessionsLock.lock()
-                    activeSessions[sessionId] = nil
-                    activeDelegates[sessionId] = nil
-                    activeSessionsLock.unlock()
-                    continuation.resume(with: result)
-                }
-            )
-            session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-            activeSessionsLock.lock()
-            activeSessions[sessionId] = session
-            activeDelegates[sessionId] = delegate
-            activeSessionsLock.unlock()
-            task = session?.downloadTask(with: request)
-            guard let task else {
-                activeSessionsLock.lock()
-                activeSessions[sessionId] = nil
-                activeDelegates[sessionId] = nil
-                activeSessionsLock.unlock()
-                continuation.resume(throwing: URLError(.unknown))
-                return
-            }
-            if let trackingId {
-                Task { @MainActor in
-                    DownloadCenter.shared.registerCancel(id: trackingId) {
-                        task.cancel()
-                    }
-                }
-            }
-            task.resume()
-        }
+        let (tempFileURL, response) = try await URLSession.shared.download(for: request)
+        let persistedURL = try persistTemporaryFile(tempFileURL)
+        return (persistedURL, response)
     }
 
     private static func downloadWithProgressOrFallback(
         request: URLRequest,
         trackingId: UUID?
     ) async throws -> (URL, URLResponse) {
-        do {
-            return try await downloadWithProgress(request: request, trackingId: trackingId)
-        } catch {
-            if let urlError = error as? URLError, urlError.code == .cancelled {
-                throw error
-            }
-            let wasCancelled = await MainActor.run {
-                guard let trackingId else { return false }
-                return DownloadCenter.shared.wasCancelled(id: trackingId)
-            }
-            if wasCancelled {
-                throw URLError(.cancelled)
-            }
-            let (tempFileURL, response) = try await URLSession.shared.download(for: request)
-            let persistedURL = try persistTemporaryFile(tempFileURL)
-            return (persistedURL, response)
-        }
+        try await downloadWithProgress(request: request, trackingId: trackingId)
     }
 
     /// 计算文件的 SHA1 哈希值
@@ -377,52 +265,5 @@ enum DownloadManager {
     /// - Throws: GlobalError 当操作失败时
     static func calculateFileSHA1(at url: URL) throws -> String {
         return try SHA1Calculator.sha1(ofFileAt: url)
-    }
-}
-
-extension DownloadManager.DownloadProgressDelegate: URLSessionDownloadDelegate, URLSessionTaskDelegate {
-    func urlSession(
-        _ session: URLSession,
-        downloadTask _: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {
-        do {
-            tempFileURL = try DownloadManager.persistTemporaryFile(location)
-        } catch {
-            tempFileError = error
-            tempFileURL = location
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData _: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        progressHandler(totalBytesWritten, totalBytesExpectedToWrite)
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: Error?
-    ) {
-        guard !didComplete else { return }
-        didComplete = true
-        if let error {
-            completion(.failure(error))
-            return
-        }
-        if let tempFileError {
-            completion(.failure(tempFileError))
-            return
-        }
-        guard let tempFileURL, let response = task.response else {
-            completion(.failure(URLError(.unknown)))
-            return
-        }
-        completion(.success((tempFileURL, response)))
     }
 }

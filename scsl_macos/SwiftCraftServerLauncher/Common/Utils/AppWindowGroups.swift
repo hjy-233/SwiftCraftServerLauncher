@@ -19,13 +19,5 @@ extension SwiftCraftServerLauncherApp {
             .windowCleanup(for: .contributors)
         }
         .defaultSize(width: 600, height: 540)
-
-        // 下载中心窗口
-        Window("download.center".localized(), id: WindowID.downloadCenter.rawValue) {
-            DownloadCenterWindowView()
-                .windowStyleConfig(for: .downloadCenter)
-                .windowCleanup(for: .downloadCenter)
-        }
-        .defaultSize(width: 520, height: 420)
     }
 }

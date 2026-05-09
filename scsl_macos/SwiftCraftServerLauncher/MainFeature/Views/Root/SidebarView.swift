@@ -11,10 +11,7 @@ public struct SidebarView: View {
     private var activeServerNodeId: String = ServerNode.local.id
     @StateObject private var serverActionManager = ServerActionManager.shared
     @StateObject private var generalSettings = GeneralSettingsManager.shared
-    @StateObject private var downloadCenter = DownloadCenter.shared
     @StateObject private var serverStatusManager = ServerStatusManager.shared
-    @State private var showDownloadTip = false
-    @State private var isHoveringDownloadBar = false
     @State private var hoveredNodeInfoId: String?
     @State private var hoveredNodePopoverId: String?
     @State private var pendingNodePopoverClose: DispatchWorkItem?
@@ -234,14 +231,6 @@ public struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
-
-            Rectangle()
-                .fill(Color.secondary.opacity(0.3))
-                .frame(height: 1)
-                .opacity(isHoveringDownloadBar ? 1 : 0)
-                .animation(.easeInOut(duration: 0.12), value: isHoveringDownloadBar)
-
-            downloadBar
         }
         .onAppear {
             serverRepository.reloadServers()
@@ -385,58 +374,6 @@ public struct SidebarView: View {
             }
         }
         previousSidebarSelection = selectedSidebarItems
-    }
-
-    private var downloadBar: some View {
-        let progress = downloadCenter.averageProgress
-        let resolvedProgress = min(max(progress ?? 0, 0), 1)
-        let activeCount = downloadCenter.activeTasks.count
-        return Button {
-            showDownloadTip.toggle()
-        } label: {
-            HStack(spacing: 10) {
-                progressRing(value: resolvedProgress, badgeCount: activeCount)
-                Text("\(Int(resolvedProgress * 100))%")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 34, alignment: .trailing)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            isHoveringDownloadBar = hovering
-        }
-        .popover(isPresented: $showDownloadTip, arrowEdge: .bottom) {
-            DownloadCenterTipView()
-        }
-    }
-
-    private func progressRing(value: Double, badgeCount: Int) -> some View {
-        let clampedValue = min(max(value, 0), 1)
-        return ZStack {
-            Circle()
-                .stroke(Color.secondary.opacity(0.35), lineWidth: 3)
-            Circle()
-                .trim(from: 0, to: clampedValue)
-                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .frame(width: 18, height: 18)
-        .overlay(alignment: .topTrailing) {
-            if badgeCount > 0 {
-                Text("\(badgeCount)")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Color.accentColor))
-                    .offset(x: 6, y: -6)
-            }
-        }
     }
 
     @ViewBuilder
