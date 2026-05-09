@@ -8,17 +8,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const APP_NAME: &str = "SwiftCraftServerLauncher";
 const TABLE_NAME: &str = "server_instances";
 
-pub struct SwiftDataServerStore {
+pub struct LocalAppServerStore {
     db_path: PathBuf,
     working_path: String,
 }
 
-pub struct SwiftDataPaths {
+pub struct LocalAppPaths {
     pub db_path: PathBuf,
     pub working_path: PathBuf,
 }
 
-impl SwiftDataServerStore {
+pub type SwiftDataServerStore = LocalAppServerStore;
+pub type SwiftDataPaths = LocalAppPaths;
+
+impl LocalAppServerStore {
     pub fn new(db_path: impl Into<PathBuf>, working_path: impl Into<String>) -> Self {
         Self {
             db_path: db_path.into(),
@@ -34,7 +37,7 @@ impl SwiftDataServerStore {
         ))
     }
 
-    pub fn platform_paths() -> Result<SwiftDataPaths, CoreError> {
+    pub fn platform_paths() -> Result<LocalAppPaths, CoreError> {
         platform_paths()
     }
 
@@ -68,8 +71,9 @@ impl SwiftDataServerStore {
 
     fn open_connection(&self) -> Result<Connection, CoreError> {
         if let Some(parent) = self.db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| CoreError::storage(format!("failed to create database directory: {error}")))?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                CoreError::storage(format!("failed to create database directory: {error}"))
+            })?;
         }
         let connection = Connection::open(&self.db_path).map_err(storage_error)?;
         connection
@@ -79,7 +83,7 @@ impl SwiftDataServerStore {
     }
 }
 
-impl ServerStorePort for SwiftDataServerStore {
+impl ServerStorePort for LocalAppServerStore {
     fn list_servers(&self) -> Result<Vec<ServerInstance>, CoreError> {
         self.ensure_schema()?;
         let connection = self.open_connection()?;
@@ -169,9 +173,9 @@ fn unix_timestamp() -> f64 {
         .unwrap_or_default()
 }
 
-fn platform_paths() -> Result<SwiftDataPaths, CoreError> {
+fn platform_paths() -> Result<LocalAppPaths, CoreError> {
     let app_support = platform_app_data_dir()?;
-    Ok(SwiftDataPaths {
+    Ok(LocalAppPaths {
         db_path: app_support.join("data").join("data.db"),
         working_path: app_support,
     })
@@ -212,7 +216,9 @@ fn platform_app_data_dir() -> Result<PathBuf, CoreError> {
 
 fn env_path(key: &str) -> Result<PathBuf, CoreError> {
     optional_env_path(key).ok_or_else(|| {
-        CoreError::storage(format!("failed to resolve required environment variable: {key}"))
+        CoreError::storage(format!(
+            "failed to resolve required environment variable: {key}"
+        ))
     })
 }
 
@@ -225,7 +231,7 @@ fn optional_env_path(key: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{APP_NAME, SwiftDataServerStore, platform_app_data_dir};
+    use super::{APP_NAME, LocalAppServerStore, platform_app_data_dir};
     use scsl_core_domain::{ServerInstance, ServerType};
     use scsl_core_ports::ServerStorePort;
     use std::fs;
@@ -235,7 +241,7 @@ mod tests {
     #[test]
     fn stores_and_loads_swift_server_rows() {
         let db_path = temp_db_path();
-        let store = SwiftDataServerStore::new(&db_path, "/tmp/scsl-work");
+        let store = LocalAppServerStore::new(&db_path, "/tmp/scsl-work");
         let mut server = ServerInstance::new(
             "server-1",
             "Paper Demo",
@@ -276,7 +282,7 @@ mod tests {
 
     #[test]
     fn current_platform_paths_match_app_convention() {
-        let store = SwiftDataServerStore::for_current_platform().expect("store should resolve");
+        let store = LocalAppServerStore::for_current_platform().expect("store should resolve");
         let app_dir = platform_app_data_dir().expect("app dir should resolve");
         assert_eq!(store.db_path(), app_dir.join("data").join("data.db"));
         assert_eq!(store.working_path(), app_dir.to_string_lossy());

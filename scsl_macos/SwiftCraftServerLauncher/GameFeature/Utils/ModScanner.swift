@@ -1,8 +1,16 @@
-import CryptoKit
 import Foundation
 
 class ModScanner {
     static let shared = ModScanner()
+
+    private struct FileHashCLIResponse: Decodable {
+        let sha1: String
+    }
+
+    private struct ResourceFileHashCLIResponse: Decodable {
+        let path: String
+        let sha1: String
+    }
 
     private init() {}
 
@@ -118,11 +126,34 @@ class ModScanner {
     // MARK: - Hash
 
     static func sha1Hash(of url: URL) -> String? {
-        return SHA1Calculator.sha1Silent(ofFileAt: url)
+        return try? sha1HashThrowing(of: url)
     }
 
     static func sha1HashThrowing(of url: URL) throws -> String? {
-        return try SHA1Calculator.sha1(ofFileAt: url)
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<String?, Error>?
+
+        Task {
+            defer { semaphore.signal() }
+            do {
+                let envelope: ScslCoreCLIEnvelope<FileHashCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
+                    arguments: ["game", "sha1-file", "--path", url.path]
+                )
+                result = .success(envelope.data.sha1)
+            } catch {
+                result = .failure(error)
+            }
+        }
+
+        semaphore.wait()
+        switch result {
+        case .success(let hash):
+            return hash
+        case .failure(let error):
+            throw error
+        case .none:
+            return nil
+        }
     }
 
     // MARK: - Fallback Methods
@@ -348,26 +379,22 @@ extension ModScanner {
     public func localModDetailsThrowing(in dir: URL) throws -> [(
         file: URL, hash: String, detail: ModrinthProjectDetail?
     )] {
-        let jarFiles = try readJarZipFiles(from: dir)
-        return jarFiles.compactMap { fileURL in
-            if let hash = ModScanner.sha1Hash(of: fileURL) {
-                var detail = getModCacheFromDatabase(hash: hash)
+        let hashEntries = try resourceFileHashesThrowing(in: dir)
+        return hashEntries.compactMap { entry in
+            let fileURL = URL(fileURLWithPath: entry.path)
+            let hash = entry.sha1
+            var detail = getModCacheFromDatabase(hash: hash)
 
-                // 如果缓存中没有找到，使用兜底策略创建基础信息
-                if detail == nil {
-                    detail = createFallbackDetailFromFileName(fileURL: fileURL)
-                    // 保存兜底信息到缓存，避免重复创建
-                    if let detail = detail {
-                        saveToCache(hash: hash, detail: detail)
-                    }
-                } else {
-                    // 更新文件名为当前实际文件名（可能已重命名为 .disabled）
-                    detail?.fileName = fileURL.lastPathComponent
+            if detail == nil {
+                detail = createFallbackDetailFromFileName(fileURL: fileURL)
+                if let detail = detail {
+                    saveToCache(hash: hash, detail: detail)
                 }
-
-                return (file: fileURL, hash: hash, detail: detail)
+            } else {
+                detail?.fileName = fileURL.lastPathComponent
             }
-            return nil
+
+            return (file: fileURL, hash: hash, detail: detail)
         }
     }
 
@@ -406,24 +433,18 @@ extension ModScanner {
 
         // 在后台线程执行文件系统操作
         return try await Task.detached(priority: .userInitiated) {
-            let jarFiles = try self.readJarZipFiles(from: dir)
+            let hashEntries = try self.resourceFileHashesThrowing(in: dir)
 
             // 使用 TaskGroup 并发计算 hash 和读取缓存
             let concurrentCount = GeneralSettingsManager.shared.concurrentDownloads
             let semaphore = AsyncSemaphore(value: concurrentCount)
 
             return await withTaskGroup(of: String?.self) { group in
-                for fileURL in jarFiles {
+                for entry in hashEntries {
                     group.addTask {
                         await semaphore.wait()
                         defer { Task { await semaphore.signal() } }
-
-                        guard let hash = ModScanner.sha1Hash(of: fileURL) else {
-                            return nil
-                        }
-
-                        // 直接返回 hash，不再使用 slug
-                        return hash
+                        return entry.sha1
                     }
                 }
 
@@ -598,7 +619,9 @@ extension ModScanner {
     func scanResourceDirectoryThrowing(
         _ dir: URL
     ) async throws -> [ModrinthProjectDetail] {
-        let jarFiles = try readJarZipFiles(from: dir)
+        let jarFiles = try resourceFileHashesThrowing(in: dir).map {
+            URL(fileURLWithPath: $0.path)
+        }
         if jarFiles.isEmpty {
             return []
         }
@@ -703,7 +726,9 @@ extension ModScanner {
             return []
         }
 
-        return try readJarZipFiles(from: dir)
+        return try resourceFileHashesThrowing(in: dir).map {
+            URL(fileURLWithPath: $0.path)
+        }
     }
 
     /// 分页扫描目录，仅对当前页的文件进行解析（静默版本）
@@ -782,12 +807,43 @@ extension ModScanner {
         page: Int,
         pageSize: Int
     ) async throws -> ([ModrinthProjectDetail], Bool) {
-        let jarFiles = try readJarZipFiles(from: dir)
+        let jarFiles = try resourceFileHashesThrowing(in: dir).map {
+            URL(fileURLWithPath: $0.path)
+        }
         return try await scanResourceFilesPageThrowing(
             fileURLs: jarFiles,
             page: page,
             pageSize: pageSize
         )
+    }
+
+    private func resourceFileHashesThrowing(
+        in dir: URL
+    ) throws -> [ResourceFileHashCLIResponse] {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<[ResourceFileHashCLIResponse], Error>?
+
+        Task {
+            defer { semaphore.signal() }
+            do {
+                let envelope: ScslCoreCLIEnvelope<[ResourceFileHashCLIResponse]> = try await ScslCoreCLIService.shared.runJSON(
+                    arguments: ["game", "hash-resource-files", "--directory", dir.path]
+                )
+                result = .success(envelope.data)
+            } catch {
+                result = .failure(error)
+            }
+        }
+
+        semaphore.wait()
+        switch result {
+        case .success(let entries):
+            return entries
+        case .failure(let error):
+            throw error
+        case .none:
+            return []
+        }
     }
 }
 

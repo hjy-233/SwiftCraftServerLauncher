@@ -31,6 +31,9 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Extract version info
         id: version
         run: |
@@ -57,6 +60,9 @@ jobs:
           echo "marketing_version=$MARKETING_VERSION" >> $GITHUB_OUTPUT
           echo "build_version=$BUILD_VERSION" >> $GITHUB_OUTPUT
 
+      - name: Build bundled CLI
+        run: cargo build --manifest-path scsl_core/Cargo.toml -p scsl_cli --release
+
       - name: Build app for ${{ matrix.arch }}
         run: |
           BUILD_DIR="build_${{ matrix.arch }}"
@@ -69,7 +75,7 @@ jobs:
             EXCLUDED_ARCHS="arm64"
           fi
 
-          xcodebuild -project SwiftCraftServerLauncher.xcodeproj \
+          xcodebuild -project scsl_macos/SwiftCraftServerLauncher.xcodeproj \
             -scheme SwiftCraftLauncher \
             -configuration Release \
             -destination "platform=macOS,arch=${{ matrix.arch }}" \
@@ -134,6 +140,7 @@ jobs:
           fi
           echo "✅ 应用构建成功: $APP_PATH"
           file "$APP_PATH/Contents/MacOS/SwiftCraftServerLauncher"
+          test -x "$APP_PATH/Contents/Resources/cli/scsl"
 
       - name: Process app with archify
         run: |
@@ -204,7 +211,7 @@ jobs:
           mkdir -p dmg_background
 
           # Copy app icon for volume icon
-          cp "SwiftCraftServerLauncher/Assets.xcassets/AppIcon.appiconset/mac512pt2x.png" "dmg_background/volume_icon.png"
+          cp "scsl_macos/SwiftCraftServerLauncher/Assets.xcassets/AppIcon.appiconset/mac512pt2x.png" "dmg_background/volume_icon.png"
 
           # Copy the existing background image (assuming it's in the project root)
           if [[ -f "dmg_background@2x.png" ]]; then
@@ -214,7 +221,7 @@ jobs:
           else
             echo "⚠️  未找到背景图片，将使用默认背景"
             # Fallback: use app icon as background
-            cp "SwiftCraftServerLauncher/Assets.xcassets/AppIcon.appiconset/mac512pt2x.png" "dmg_background/background@2x.png"
+            cp "scsl_macos/SwiftCraftServerLauncher/Assets.xcassets/AppIcon.appiconset/mac512pt2x.png" "dmg_background/background@2x.png"
           fi
 
           echo "✅ DMG assets prepared"

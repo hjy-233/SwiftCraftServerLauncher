@@ -19,4 +19,4 @@ scsl_core_local = { path = "../scsl_core_local" }
 scsl_core_mirror = { path = "../scsl_core_mirror" }
 scsl_core_ports = { path = "../scsl_core_ports" }
 scsl_core_service = { path = "../scsl_core_service" }
-scsl_core_swiftdata = { path = "../scsl_core_swiftdata" }
+scsl_core_store_local = { path = "../scsl_core_store_local" }

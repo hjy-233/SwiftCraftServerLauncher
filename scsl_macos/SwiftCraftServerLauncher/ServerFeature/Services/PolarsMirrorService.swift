@@ -31,15 +31,23 @@ enum PolarsMirrorService {
     private static let baseURL = URL(string: "https://mirror.polars.cc/api/query/minecraft/core") ?? URL(fileURLWithPath: "/")
 
     static func fetchCoreTypes(baseURL: URL? = nil) async throws -> [CoreType] {
-        let resolvedBaseURL = baseURL ?? Self.baseURL
-        let data = try await APIClient.get(url: resolvedBaseURL)
-        return try JSONDecoder().decode([CoreType].self, from: data)
+        let response: ScslCoreCLIEnvelope<[CoreType]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "mirror", "polars-core-types",
+                "--base-url", (baseURL ?? Self.baseURL).absoluteString,
+            ],
+        )
+        return response.data
     }
 
     static func fetchCoreItems(coreTypeId: Int, baseURL: URL? = nil) async throws -> [CoreItem] {
-        let resolvedBaseURL = baseURL ?? Self.baseURL
-        let url = resolvedBaseURL.appendingPathComponent("\(coreTypeId)")
-        let data = try await APIClient.get(url: url)
-        return try JSONDecoder().decode([CoreItem].self, from: data)
+        let response: ScslCoreCLIEnvelope<[CoreItem]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "mirror", "polars-core-items",
+                "--core-type-id", String(coreTypeId),
+                "--base-url", (baseURL ?? Self.baseURL).absoluteString,
+            ],
+        )
+        return response.data
     }
 }

@@ -2,6 +2,39 @@ import Foundation
 
 enum CommonService {
 
+    private static func runCLIJSONSync<T: Decodable>(
+        arguments: [String]
+    ) throws -> ScslCoreCLIEnvelope<T> {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<ScslCoreCLIEnvelope<T>, Error>?
+
+        Task {
+            do {
+                let response: ScslCoreCLIEnvelope<T> = try await ScslCoreCLIService.shared.runJSON(
+                    arguments: arguments
+                )
+                result = .success(response)
+            } catch {
+                result = .failure(error)
+            }
+            semaphore.signal()
+        }
+
+        semaphore.wait()
+        switch result {
+        case .success(let response):
+            return response
+        case .failure(let error):
+            throw error
+        case .none:
+            throw GlobalError.unknown(
+                chineseMessage: "CLI 未返回结果",
+                i18nKey: "error.unknown.generic",
+                level: .silent
+            )
+        }
+    }
+
     /// 根据 mod loader 获取适配的版本列表（静默版本）
     /// - Parameter loader: 加载器类型
     /// - Returns: 兼容的版本列表
@@ -79,18 +112,32 @@ enum CommonService {
         from loader: ModrinthLoader,
         librariesDir: URL
     ) -> String {
-        let jarPaths: [String] = loader.libraries.compactMap { lib in
-            guard lib.includeInClasspath else { return nil }
-            if lib.includeInClasspath {
+        do {
+            let data = try JSONEncoder().encode(loader)
+            let json = String(data: data, encoding: .utf8) ?? "{}"
+            let response: ScslCoreCLIEnvelope<String> = try runCLIJSONSync(
+                arguments: [
+                    "game",
+                    "loader-classpath",
+                    "--json",
+                    json,
+                    "--libraries-dir",
+                    librariesDir.path,
+                    "--include-in-classpath-only",
+                ]
+            )
+            return response.data
+        } catch {
+            Logger.shared.error("生成 Forge/NeoForge classpath 失败: \(error.localizedDescription)")
+            let jarPaths: [String] = loader.libraries.compactMap { lib in
+                guard lib.includeInClasspath else { return nil }
                 guard let downloads = lib.downloads else { return nil }
                 let artifact = downloads.artifact
                 guard let artifactPath = artifact.path else { return nil }
                 return librariesDir.appendingPathComponent(artifactPath).path
-            } else {
-                return ""
             }
+            return jarPaths.joined(separator: ":")
         }
-        return jarPaths.joined(separator: ":")
     }
 
     /// 获取指定加载器类型和 Minecraft 版本的所有加载器版本（静默版本）
@@ -143,6 +190,50 @@ enum CommonService {
         return firstVersion
     }
 
+    /// 获取指定加载器类型和 Minecraft 版本的加载器版本号列表
+    /// - Parameters:
+    ///   - type: 加载器类型
+    ///   - minecraftVersion: Minecraft 版本
+    /// - Returns: 加载器版本号列表
+    static func fetchLoaderVersionIDs(
+        type: String,
+        minecraftVersion: String
+    ) async -> [String] {
+        do {
+            return try await fetchLoaderVersionIDsThrowing(
+                type: type,
+                minecraftVersion: minecraftVersion
+            )
+        } catch {
+            let globalError = GlobalError.from(error)
+            Logger.shared.error("获取 \(type) 加载器版本列表失败: \(globalError.chineseMessage)")
+            return []
+        }
+    }
+
+    /// 获取指定加载器类型和 Minecraft 版本的加载器版本号列表（抛出异常版本）
+    /// - Parameters:
+    ///   - type: 加载器类型
+    ///   - minecraftVersion: Minecraft 版本
+    /// - Returns: 加载器版本号列表
+    /// - Throws: GlobalError 当操作失败时
+    static func fetchLoaderVersionIDsThrowing(
+        type: String,
+        minecraftVersion: String
+    ) async throws -> [String] {
+        let response: ScslCoreCLIEnvelope<[String]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "server",
+                "loader-versions",
+                "--server-type",
+                type,
+                "--game-version",
+                minecraftVersion,
+            ]
+        )
+        return response.data
+    }
+
     /// 获取指定加载器类型的所有版本（抛出异常版本）
     /// - Parameter type: 加载器类型
     /// - Returns: 版本列表
@@ -150,54 +241,45 @@ enum CommonService {
     static func fetchAllVersionThrowing(
         type: String
     ) async throws -> [LoaderVersion] {
-        // 获取版本清单
-        let manifestURL = URLConfig.API.Modrinth.loaderManifest(loader: type)
-        // 使用统一的 API 客户端
-        let manifestData = try await APIClient.get(url: manifestURL)
+        let response: ScslCoreCLIEnvelope<ModrinthLoaderVersion> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["modrinth", "loader-manifest", type]
+        )
+        let result = response.data
 
-        // 解析版本清单
-        do {
-            let result = try JSONDecoder().decode(
-                ModrinthLoaderVersion.self,
-                from: manifestData
-            )
-
-            // 对于 NeoForge，不进行 stable 过滤，因为所有版本都是 beta
-            if type == "neo" {
-                return result.gameVersions
-            } else {
-                // 过滤出稳定版本
-                return result.gameVersions.filter { $0.stable }
-            }
-        } catch {
-            throw GlobalError.validation(
-                chineseMessage:
-                    "解析 \(type) 版本清单失败: \(error.localizedDescription)",
-                i18nKey: "error.validation.version_manifest_parse_failed",
-                level: .notification
-            )
+        if type == "neo" {
+            return result.gameVersions
         }
+        return result.gameVersions.filter { $0.stable }
     }
 
     /// 将Maven坐标转换为文件路径（支持classifier和@符号）
     /// - Parameter coordinate: Maven坐标
     /// - Returns: 文件路径
     static func convertMavenCoordinateToPath(_ coordinate: String) -> String {
-        // 检查是否包含@符号，需要特殊处理
-        if coordinate.contains("@") {
-            return convertMavenCoordinateWithAtSymbol(coordinate)
+        do {
+            let response: ScslCoreCLIEnvelope<String> = try runCLIJSONSync(
+                arguments: [
+                    "game",
+                    "maven-path",
+                    "--coordinate",
+                    coordinate,
+                    "--libraries-dir",
+                    AppPaths.librariesDirectory.path,
+                ]
+            )
+            return response.data
+        } catch {
+            Logger.shared.error("Maven 坐标转文件路径失败: \(error.localizedDescription)")
+            if coordinate.contains("@") {
+                return convertMavenCoordinateWithAtSymbol(coordinate)
+            }
+            if let relativePath = mavenCoordinateToRelativePath(coordinate) {
+                return AppPaths.librariesDirectory.appendingPathComponent(
+                    relativePath
+                ).path
+            }
+            return coordinate
         }
-
-        // 对于标准Maven坐标，使用CommonService的方法
-        if let relativePath = mavenCoordinateToRelativePath(coordinate) {
-
-            return AppPaths.librariesDirectory.appendingPathComponent(
-                relativePath
-            ).path
-        }
-
-        // 如果CommonService方法失败，可能是非标准格式，返回原值
-        return coordinate
     }
 
     /// 解析包含@符号的Maven坐标的公共逻辑
@@ -267,6 +349,15 @@ enum CommonService {
     /// - Parameter coordinate: Maven 坐标
     /// - Returns: 相对路径
     static func mavenCoordinateToRelativePath(_ coordinate: String) -> String? {
+        do {
+            let response: ScslCoreCLIEnvelope<String> = try runCLIJSONSync(
+                arguments: ["game", "maven-relative-path", coordinate]
+            )
+            return response.data
+        } catch {
+            Logger.shared.error("Maven 坐标转相对路径失败: \(error.localizedDescription)")
+        }
+
         let parts = coordinate.split(separator: ":")
         guard parts.count >= 3 else { return nil }
 
@@ -358,12 +449,29 @@ enum CommonService {
         from loader: ModrinthLoader,
         librariesDir: URL
     ) -> String {
-        let jarPaths = loader.libraries.compactMap { coordinate -> String? in
-            guard let relPath = mavenCoordinateToRelativePath(coordinate.name)
-            else { return nil }
-            return librariesDir.appendingPathComponent(relPath).path
+        do {
+            let data = try JSONEncoder().encode(loader)
+            let json = String(data: data, encoding: .utf8) ?? "{}"
+            let response: ScslCoreCLIEnvelope<String> = try runCLIJSONSync(
+                arguments: [
+                    "game",
+                    "loader-classpath",
+                    "--json",
+                    json,
+                    "--libraries-dir",
+                    librariesDir.path,
+                ]
+            )
+            return response.data
+        } catch {
+            Logger.shared.error("生成 Fabric/Quilt classpath 失败: \(error.localizedDescription)")
+            let jarPaths = loader.libraries.compactMap { coordinate -> String? in
+                guard let relPath = mavenCoordinateToRelativePath(coordinate.name)
+                else { return nil }
+                return librariesDir.appendingPathComponent(relPath).path
+            }
+            return jarPaths.joined(separator: ":")
         }
-        return jarPaths.joined(separator: ":")
     }
 
     /// 处理 ModrinthLoader 中的游戏版本占位符
@@ -375,20 +483,32 @@ enum CommonService {
         loader: ModrinthLoader,
         gameVersion: String
     ) -> ModrinthLoader {
-        var processedLoader = loader
-
-        // 处理 libraries 中的 URL 占位符
-        processedLoader.libraries = loader.libraries.map { library in
-            var processedLibrary = library
-
-            // 处理 name 字段中的占位符
-            processedLibrary.name = library.name.replacingOccurrences(
-                of: "${modrinth.gameVersion}",
-                with: gameVersion
+        do {
+            let data = try JSONEncoder().encode(loader)
+            let json = String(data: data, encoding: .utf8) ?? "{}"
+            let response: ScslCoreCLIEnvelope<ModrinthLoader> = try runCLIJSONSync(
+                arguments: [
+                    "game",
+                    "process-loader-placeholders",
+                    "--json",
+                    json,
+                    "--game-version",
+                    gameVersion,
+                ]
             )
-
-            return processedLibrary
+            return response.data
+        } catch {
+            Logger.shared.error("处理 loader 占位符失败: \(error.localizedDescription)")
+            var processedLoader = loader
+            processedLoader.libraries = loader.libraries.map { library in
+                var processedLibrary = library
+                processedLibrary.name = library.name.replacingOccurrences(
+                    of: "${modrinth.gameVersion}",
+                    with: gameVersion
+                )
+                return processedLibrary
+            }
+            return processedLoader
         }
-        return processedLoader
     }
 }

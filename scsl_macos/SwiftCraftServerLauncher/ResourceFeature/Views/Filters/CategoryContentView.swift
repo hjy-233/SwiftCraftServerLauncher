@@ -161,9 +161,7 @@ struct CategoryContentView: View {
             case ProjectType.resourcepack:
                 resourcePackSections
             case ProjectType.shader:
-                if dataSource == .modrinth {
-                    loaderSection
-                }
+                loaderSection
                 shaderSections
             default:
                 EmptyView()
@@ -202,27 +200,23 @@ struct CategoryContentView: View {
     }
 
     private var shaderSections: some View {
-
         Group {
-            // CurseForge 数据源不支持性能要求筛选，在 CF 标签下不显示该部分
-            if dataSource == .modrinth {
-                CategorySectionView(
-                    title: "filter.behavior",
-                    items: viewModel.features.map {
-                        FilterItem(id: $0.name, name: $0.name)
-                    },
-                    selectedItems: $selectedFeatures,
-                    isLoading: viewModel.isLoading
-                )
-                CategorySectionView(
-                    title: "filter.performance",
-                    items: viewModel.performanceImpacts.map {
-                        FilterItem(id: $0.name, name: $0.name)
-                    },
-                    selectedItems: $selectedPerformanceImpacts,
-                    isLoading: viewModel.isLoading
-                )
-            }
+            CategorySectionView(
+                title: "filter.behavior",
+                items: viewModel.features.map {
+                    FilterItem(id: $0.name, name: $0.name)
+                },
+                selectedItems: $selectedFeatures,
+                isLoading: viewModel.isLoading
+            )
+            CategorySectionView(
+                title: "filter.performance",
+                items: viewModel.performanceImpacts.map {
+                    FilterItem(id: $0.name, name: $0.name)
+                },
+                selectedItems: $selectedPerformanceImpacts,
+                isLoading: viewModel.isLoading
+            )
         }
     }
 

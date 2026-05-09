@@ -52,21 +52,27 @@ enum ServerPlayerListService {
         }
     }
 
-    static func readList(serverDir: URL, fileName: String) throws -> [PlayerEntry] {
-        let url = serverDir.appendingPathComponent(fileName)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return []
-        }
-        let data = try Data(contentsOf: url)
-        let decoder = JSONDecoder()
-        return try decoder.decode([PlayerEntry].self, from: data)
+    static func readList(server: ServerInstance, fileName: String) async throws -> [PlayerEntry] {
+        let response: ScslCoreCLIEnvelope<[PlayerEntry]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["server", "players", "read", server.id, "--file-name", fileName]
+        )
+        return response.data
     }
 
-    static func writeList(serverDir: URL, fileName: String, entries: [PlayerEntry]) throws {
-        let url = serverDir.appendingPathComponent(fileName)
+    static func writeList(server: ServerInstance, fileName: String, entries: [PlayerEntry]) async throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(entries)
-        try data.write(to: url, options: .atomic)
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw GlobalError.fileSystem(
+                chineseMessage: "玩家列表编码失败",
+                i18nKey: "error.filesystem.write_failed",
+                level: .notification
+            )
+        }
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["server", "players", "write", server.id, "--file-name", fileName],
+            standardInput: content
+        )
     }
 }

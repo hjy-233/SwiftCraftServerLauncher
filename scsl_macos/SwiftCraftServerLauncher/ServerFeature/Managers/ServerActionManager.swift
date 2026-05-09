@@ -49,22 +49,21 @@ class ServerActionManager: ObservableObject {
                         .appendingPathComponent(server.name, isDirectory: true)
                 }
 
-                if FileManager.default.fileExists(atPath: dir.path) {
-                    try FileManager.default.removeItem(at: dir)
+                if server.nodeId == ServerNode.local.id {
+                    _ = try await ScslCoreCLIService.shared.run(arguments: ["server", "delete", server.id])
                 } else {
-                    Logger.shared.warning("删除服务器时未找到目录，跳过本地缓存删除: \(dir.path)")
-                }
-
-                if server.nodeId != ServerNode.local.id,
-                   let node = serverNodeRepository.getNode(by: server.nodeId) {
-                    try await SSHNodeService.deleteRemoteServerDirectory(node: node, serverName: server.name)
+                    throw GlobalError.validation(
+                        chineseMessage: "远程节点功能已停用，请先迁移或导回本地服务器后再删除。",
+                        i18nKey: "error.validation.server_not_selected",
+                        level: .notification
+                    )
                 }
 
                 AppPaths.invalidatePaths(forServerName: server.name)
+                AppPaths.invalidatePaths(forServerName: server.directoryName)
                 ServerProcessManager.shared.removeServerState(serverId: server.id)
                 ServerStatusManager.shared.removeServerState(serverId: server.id)
-
-                try await serverRepository.deleteServer(id: server.id)
+                serverRepository.reloadServers()
 
                 Logger.shared.info("成功删除服务器: \(server.name)")
             } catch {
@@ -85,14 +84,9 @@ class ServerActionManager: ObservableObject {
     ) {
         Task {
             do {
-                let dir = AppPaths.serverDirectory(serverName: name)
-                if FileManager.default.fileExists(atPath: dir.path) {
-                    try FileManager.default.removeItem(at: dir)
-                }
-
+                _ = try await ScslCoreCLIService.shared.run(arguments: ["server", "delete-corrupted", name])
                 AppPaths.invalidatePaths(forServerName: name)
-
-                try await serverRepository.deleteServersByName(name)
+                serverRepository.reloadServers()
 
                 Logger.shared.info("成功删除损坏服务器（目录 + 数据库）: \(name)")
             } catch {

@@ -1,9 +1,17 @@
 import Foundation
-import ZIPFoundation
 
 @MainActor
 final class BackupService: ObservableObject {
   static let shared = BackupService()
+
+  private struct BackupEntryCLIResponse: Decodable {
+    let path: String
+    let modifiedAt: Double
+  }
+
+  private struct BackupRestoreCLIResponse: Decodable {
+    let createdServer: Bool
+  }
 
   struct BackupEntry: Identifiable {
     let id = UUID()
@@ -66,8 +74,14 @@ final class BackupService: ObservableObject {
       try fileManager.removeItem(at: outputURL)
     }
 
-    try await archiveDirectory(sourceRoot: sourceRoot, outputURL: outputURL)
-    try pruneBackups(keepCount: settings.backupKeepCount, backupRoot: backupRoot)
+    let _: ScslCoreCLIEnvelope<ResourceDownloadCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
+      arguments: [
+        "game", "backup-create",
+        "--source-root", sourceRoot.path,
+        "--output-path", outputURL.path,
+        "--keep-count", String(settings.backupKeepCount),
+      ]
+    )
 
     settings.backupLastTimestamp = Date().timeIntervalSince1970
     Logger.shared.info("创建 servers 备份成功: \(outputURL.path)")
@@ -92,34 +106,22 @@ final class BackupService: ObservableObject {
   }
 
   private func listBackups(in backupRoot: URL) -> [BackupEntry] {
-    let fileManager = FileManager.default
-    let path = backupRoot.path
-    guard fileManager.fileExists(atPath: path) else {
-      return []
-    }
-    guard fileManager.isReadableFile(atPath: path) else {
-      return []
-    }
-
-    let urls: [URL]
+    let result: [BackupEntryCLIResponse]
     do {
-      urls = try fileManager.contentsOfDirectory(
-        at: backupRoot,
-        includingPropertiesForKeys: [.contentModificationDateKey],
-        options: [.skipsHiddenFiles]
+      let envelope: ScslCoreCLIEnvelope<[BackupEntryCLIResponse]> = try runScslCLIJSONSync(
+        arguments: ["game", "backup-list", "--backup-root", backupRoot.path]
       )
+      result = envelope.data
     } catch {
       return []
     }
-
-    let entries: [BackupEntry] = urls.compactMap { url in
-      guard url.pathExtension.lowercased() == "zip" else { return nil }
-      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
-      let date = values?.contentModificationDate ?? .distantPast
-      return BackupEntry(url: url, createdAt: date)
+    return result.compactMap { item in
+      let url = URL(fileURLWithPath: item.path)
+      return BackupEntry(
+        url: url,
+        createdAt: Date(timeIntervalSince1970: item.modifiedAt)
+      )
     }
-
-    return entries.sorted { $0.createdAt > $1.createdAt }
   }
 
   private func appendCandidate(_ url: URL, to list: inout [URL]) {
@@ -152,30 +154,14 @@ final class BackupService: ObservableObject {
   }
 
   func listServers(in backupURL: URL) -> [String] {
-    let archive: Archive
     do {
-      archive = try Archive(url: backupURL, accessMode: .read)
+      let envelope: ScslCoreCLIEnvelope<[String]> = try runScslCLIJSONSync(
+        arguments: ["game", "backup-list-servers", "--backup-path", backupURL.path]
+      )
+      return envelope.data
     } catch {
       return []
     }
-    let prefix = "servers/"
-    var names = Set<String>()
-
-    for entry in archive {
-      let path = entry.path
-      guard path.hasPrefix(prefix) else { continue }
-      let rest = String(path.dropFirst(prefix.count))
-      guard !rest.isEmpty else { continue }
-      // 只识别 servers/<name>/... 这种路径，忽略 servers 下的文件。
-      guard rest.contains("/") else { continue }
-      let firstComponent = rest.split(separator: "/").first.map(String.init)
-      guard let name = firstComponent, !name.isEmpty else { continue }
-      if name.hasPrefix(".") { continue }
-      if name == ".DS_Store" { continue }
-      names.insert(name)
-    }
-
-    return names.sorted()
   }
 
   struct RestoreResult {
@@ -183,50 +169,18 @@ final class BackupService: ObservableObject {
   }
 
   func restoreServer(named serverName: String, from backupURL: URL) throws -> RestoreResult {
-    let archive = try Archive(url: backupURL, accessMode: .read)
-
-    let fileManager = FileManager.default
-    let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(
-      "swiftcraft-restore-\(UUID().uuidString)",
-      isDirectory: true
-    )
-    try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-
-    let prefix = "servers/\(serverName)/"
-    for entry in archive {
-      let path = entry.path
-      guard path.hasPrefix(prefix) else { continue }
-      let destinationURL = tempRoot.appendingPathComponent(
-        path,
-        isDirectory: entry.type == .directory
-      )
-      try fileManager.createDirectory(
-        at: destinationURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      _ = try archive.extract(entry, to: destinationURL)
-    }
-
-    let restoredServerPath = tempRoot.appendingPathComponent("servers", isDirectory: true)
-      .appendingPathComponent(serverName, isDirectory: true)
-    guard fileManager.fileExists(atPath: restoredServerPath.path) else {
-      throw NSError(
-        domain: "BackupService",
-        code: 3,
-        userInfo: [NSLocalizedDescriptionKey: "备份中未找到指定服务器"]
-      )
-    }
-
     let targetRoot = AppPaths.serverRootDirectory
+    let envelope: ScslCoreCLIEnvelope<BackupRestoreCLIResponse> = try runScslCLIJSONSync(
+      arguments: [
+        "game", "backup-restore",
+        "--backup-path", backupURL.path,
+        "--server-name", serverName,
+        "--target-root", targetRoot.path,
+      ]
+    )
     let targetServerPath = targetRoot.appendingPathComponent(serverName, isDirectory: true)
-    if fileManager.fileExists(atPath: targetServerPath.path) {
-      try fileManager.removeItem(at: targetServerPath)
-    }
-    try fileManager.createDirectory(at: targetRoot, withIntermediateDirectories: true)
-    try fileManager.moveItem(at: restoredServerPath, to: targetServerPath)
-    try? fileManager.removeItem(at: tempRoot)
-
     let createdServer = try ensureServerRecord(serverName: serverName, serverPath: targetServerPath)
+    _ = envelope
     return RestoreResult(createdServer: createdServer)
   }
 
@@ -273,74 +227,38 @@ final class BackupService: ObservableObject {
       )) ?? []
     return files.first { $0.pathExtension.lowercased() == "jar" }?.lastPathComponent
   }
+}
 
-  private func archiveDirectory(sourceRoot: URL, outputURL: URL) async throws {
-    try await withCheckedThrowingContinuation { continuation in
-      let process = Process()
-      let stderrPipe = Pipe()
+private struct ResourceDownloadCLIResponse: Decodable {
+  let path: String
+}
 
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-      process.arguments = [
-        "-c",
-        "-k",
-        "--keepParent",
-        sourceRoot.path,
-        outputURL.path,
-      ]
-      process.standardError = stderrPipe
+private func runScslCLIJSONSync<T: Decodable>(
+  arguments: [String],
+  standardInput: String? = nil
+) throws -> ScslCoreCLIEnvelope<T> {
+  let semaphore = DispatchSemaphore(value: 0)
+  var result: Result<ScslCoreCLIEnvelope<T>, Error>?
 
-      process.terminationHandler = { process in
-        let errorData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorOutput =
-          String(data: errorData, encoding: .utf8)?
-          .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        if process.terminationStatus == 0 {
-          continuation.resume()
-        } else {
-          let message =
-            errorOutput.isEmpty
-            ? "ditto 备份失败，退出码: \(process.terminationStatus)"
-            : errorOutput
-          continuation.resume(
-            throwing: NSError(
-              domain: "BackupService",
-              code: Int(process.terminationStatus),
-              userInfo: [NSLocalizedDescriptionKey: message]
-            )
-          )
-        }
-      }
-
-      do {
-        try process.run()
-      } catch {
-        continuation.resume(throwing: error)
-      }
+  Task {
+    defer { semaphore.signal() }
+    do {
+      result = .success(try await ScslCoreCLIService.shared.runJSON(
+        arguments: arguments,
+        standardInput: standardInput
+      ))
+    } catch {
+      result = .failure(error)
     }
   }
 
-  private func pruneBackups(keepCount: Int, backupRoot: URL) throws {
-    let fileManager = FileManager.default
-    let files = try fileManager.contentsOfDirectory(
-      at: backupRoot,
-      includingPropertiesForKeys: [.contentModificationDateKey],
-      options: [.skipsHiddenFiles]
-    )
-    .filter { $0.pathExtension.lowercased() == "zip" }
-    .sorted { lhs, rhs in
-      let lDate =
-        (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-        ?? .distantPast
-      let rDate =
-        (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-        ?? .distantPast
-      return lDate > rDate
-    }
-
-    if files.count <= keepCount { return }
-    for oldFile in files.dropFirst(keepCount) {
-      try? fileManager.removeItem(at: oldFile)
-    }
+  semaphore.wait()
+  switch result {
+  case .success(let envelope):
+    return envelope
+  case .failure(let error):
+    throw error
+  case .none:
+    throw ScslCoreCLIError.executionFailed("未收到 scsl_cli 返回结果")
   }
 }

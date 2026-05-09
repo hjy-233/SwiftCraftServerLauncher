@@ -133,7 +133,12 @@ impl ResourceDownloadPlanner {
         target: &DownloadTarget,
     ) -> Result<PathBuf, CoreError> {
         let destination = self.resource_destination(game_name, resource_type, &target.file_name)?;
-        download_file_to_path(&target.url, &destination, target.sha1.as_deref())
+        download_file_to_path(
+            &target.url,
+            &destination,
+            target.sha1.as_deref(),
+            Some(&target.headers),
+        )
     }
 }
 
@@ -257,6 +262,7 @@ pub fn download_file_to_path(
     url: &str,
     destination: impl AsRef<Path>,
     expected_sha1: Option<&str>,
+    headers: Option<&BTreeMap<String, String>>,
 ) -> Result<PathBuf, CoreError> {
     if !is_http_url(url) {
         return Err(CoreError::validation("invalid download url"));
@@ -266,8 +272,9 @@ pub fn download_file_to_path(
     let parent = destination.parent().ok_or_else(|| {
         CoreError::validation("download destination must have a parent directory")
     })?;
-    fs::create_dir_all(parent)
-        .map_err(|error| CoreError::runtime(format!("failed to create resource directory: {error}")))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        CoreError::runtime(format!("failed to create resource directory: {error}"))
+    })?;
 
     let temp_path = destination.with_extension(format!(
         "{}.download",
@@ -280,13 +287,20 @@ pub fn download_file_to_path(
         let _ = fs::remove_file(&temp_path);
     }
 
-    let output = Command::new("curl")
+    let mut command = Command::new("curl");
+    command
         .arg("-L")
         .arg("--fail")
         .arg("--silent")
         .arg("--show-error")
         .arg("--output")
-        .arg(&temp_path)
+        .arg(&temp_path);
+    if let Some(headers) = headers {
+        for (name, value) in headers {
+            command.arg("-H").arg(format!("{name}: {value}"));
+        }
+    }
+    let output = command
         .arg(url)
         .output()
         .map_err(|error| CoreError::runtime(format!("failed to spawn curl: {error}")))?;
@@ -309,8 +323,9 @@ pub fn download_file_to_path(
     if destination.exists() {
         let _ = fs::remove_file(destination);
     }
-    fs::rename(&temp_path, destination)
-        .map_err(|error| CoreError::runtime(format!("failed to persist downloaded resource: {error}")))?;
+    fs::rename(&temp_path, destination).map_err(|error| {
+        CoreError::runtime(format!("failed to persist downloaded resource: {error}"))
+    })?;
     Ok(destination.to_path_buf())
 }
 
@@ -328,7 +343,11 @@ fn compute_sha1(path: impl AsRef<Path>) -> Result<String, CoreError> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sha1 = stdout.split_whitespace().next().unwrap_or_default().to_string();
+    let sha1 = stdout
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_string();
     if sha1.is_empty() {
         return Err(CoreError::runtime("sha1 command returned empty output"));
     }
@@ -341,6 +360,7 @@ mod tests {
         ResourceDownloadPlanner, ResourceType, fabric_server_jar_target, forge_installer_target,
         java_component_for_major, mirror_direct_target,
     };
+    use std::path::PathBuf;
 
     #[test]
     fn builds_mirror_direct_target() {
@@ -395,7 +415,10 @@ mod tests {
             .resource_destination("Demo", ResourceType::Mod, "fabric-api.jar")
             .expect("path should resolve");
 
-        assert_eq!(path, PathBuf::from("/tmp/scsl/profiles/Demo/mods/fabric-api.jar"));
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/scsl/profiles/Demo/mods/fabric-api.jar")
+        );
     }
 
     #[test]
@@ -405,6 +428,9 @@ mod tests {
             .resource_destination("Demo", ResourceType::Resourcepack, "optifine.jar")
             .expect("path should resolve");
 
-        assert_eq!(path, PathBuf::from("/tmp/scsl/profiles/Demo/mods/optifine.jar"));
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/scsl/profiles/Demo/mods/optifine.jar")
+        );
     }
 }

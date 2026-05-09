@@ -105,10 +105,9 @@ final class ServerConsoleManager: ObservableObject {
     }
 
     private func append(serverId: String, text: String) {
-        if logs[serverId] == nil {
-            logs[serverId] = []
-        }
-        logs[serverId]?.append(text)
+        var serverLogs = logs[serverId] ?? []
+        serverLogs.append(text)
+        logs[serverId] = serverLogs
         publishEvent(serverId: serverId, text: text, kind: .append)
     }
 

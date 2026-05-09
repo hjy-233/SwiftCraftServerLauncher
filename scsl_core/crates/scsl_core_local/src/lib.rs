@@ -1,8 +1,8 @@
-use serde::Serialize;
-use serde_json::Value;
 use scsl_core_domain::{CoreError, LogQuery, LogSnapshot, ServerInstance, ServerStatus};
 use scsl_core_launch::ServerLaunchPlanner;
 use scsl_core_ports::ServerRuntimePort;
+use serde::Serialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -14,6 +14,13 @@ pub struct LocalServerFileEntry {
     pub relative_path: String,
     pub is_directory: bool,
     pub file_size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalLogPollResult {
+    pub file_path: Option<String>,
+    pub appended_text: String,
+    pub next_offset: u64,
 }
 
 pub struct LocalServerRuntime {
@@ -68,6 +75,77 @@ impl LocalServerRuntime {
         }
     }
 
+    pub fn poll_local_log(
+        &self,
+        server: &ServerInstance,
+        current_file_path: Option<&str>,
+        offset: u64,
+    ) -> Result<LocalLogPollResult, CoreError> {
+        if !server.is_local() {
+            return Err(CoreError::unsupported(
+                "local CLI runtime only supports local servers",
+            ));
+        }
+
+        let server_dir = self.server_dir(server);
+        for file in self.local_log_candidates(&server_dir) {
+            if !file.exists() {
+                continue;
+            }
+
+            let file_path = file.to_string_lossy().to_string();
+            let effective_offset = if current_file_path == Some(file_path.as_str()) {
+                offset
+            } else {
+                0
+            };
+
+            if let Some((appended_text, next_offset)) =
+                self.read_local_log_update(&file, effective_offset)?
+            {
+                return Ok(LocalLogPollResult {
+                    file_path: Some(file_path),
+                    appended_text,
+                    next_offset,
+                });
+            }
+        }
+
+        Ok(LocalLogPollResult {
+            file_path: None,
+            appended_text: String::new(),
+            next_offset: 0,
+        })
+    }
+
+    fn local_log_candidates(&self, server_dir: &Path) -> [PathBuf; 4] {
+        [
+            server_dir.join("scsl-server.log"),
+            server_dir.join("logs/latest.log"),
+            server_dir.join("latest.log"),
+            server_dir.join("server.log"),
+        ]
+    }
+
+    fn read_local_log_update(
+        &self,
+        file: &Path,
+        offset: u64,
+    ) -> Result<Option<(String, u64)>, CoreError> {
+        let metadata = fs::metadata(file)
+            .map_err(|error| CoreError::runtime(format!("failed to inspect log file: {error}")))?;
+        let file_size = metadata.len();
+        let safe_offset = offset.min(file_size);
+        let bytes = fs::read(file)
+            .map_err(|error| CoreError::runtime(format!("failed to read log file: {error}")))?;
+        let appended = if safe_offset as usize >= bytes.len() {
+            String::new()
+        } else {
+            String::from_utf8_lossy(&bytes[safe_offset as usize..]).into_owned()
+        };
+        Ok(Some((appended, file_size)))
+    }
+
     pub fn send_command(&self, server: &ServerInstance, command: &str) -> Result<(), CoreError> {
         if !server.is_local() {
             return Err(CoreError::unsupported(
@@ -85,11 +163,7 @@ impl LocalServerRuntime {
         self.run_shell(&shell).map(|_| ())
     }
 
-    pub fn send_interrupt(
-        &self,
-        server: &ServerInstance,
-        force: bool,
-    ) -> Result<(), CoreError> {
+    pub fn send_interrupt(&self, server: &ServerInstance, force: bool) -> Result<(), CoreError> {
         if !server.is_local() {
             return Err(CoreError::unsupported(
                 "local CLI runtime only supports local servers",
@@ -159,8 +233,9 @@ impl LocalServerRuntime {
             return Ok(BTreeMap::new());
         }
 
-        let content = fs::read_to_string(&path)
-            .map_err(|error| CoreError::runtime(format!("failed to read server.properties: {error}")))?;
+        let content = fs::read_to_string(&path).map_err(|error| {
+            CoreError::runtime(format!("failed to read server.properties: {error}"))
+        })?;
         let mut result = BTreeMap::new();
         for line in content.lines() {
             let raw = line.trim();
@@ -196,8 +271,9 @@ impl LocalServerRuntime {
         } else {
             format!("{content}\n")
         };
-        fs::write(&path, content)
-            .map_err(|error| CoreError::runtime(format!("failed to write server.properties: {error}")))
+        fs::write(&path, content).map_err(|error| {
+            CoreError::runtime(format!("failed to write server.properties: {error}"))
+        })
     }
 
     pub fn list_server_files(
@@ -252,8 +328,9 @@ impl LocalServerRuntime {
 
         let path = self.resolve_server_path(server, relative_path)?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| CoreError::runtime(format!("failed to create parent directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                CoreError::runtime(format!("failed to create parent directory: {error}"))
+            })?;
         }
         fs::write(&path, content)
             .map_err(|error| CoreError::runtime(format!("failed to write file: {error}")))
@@ -298,8 +375,9 @@ impl LocalServerRuntime {
         let source = self.resolve_server_path(server, source_relative_path)?;
         let target = self.resolve_server_path(server, target_relative_path)?;
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| CoreError::runtime(format!("failed to create parent directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                CoreError::runtime(format!("failed to create parent directory: {error}"))
+            })?;
         }
         if target.exists() {
             remove_existing_path(&target)?;
@@ -340,8 +418,9 @@ impl LocalServerRuntime {
         }
 
         let target_dir = self.resolve_server_path(server, target_directory)?;
-        fs::create_dir_all(&target_dir)
-            .map_err(|error| CoreError::runtime(format!("failed to create target directory: {error}")))?;
+        fs::create_dir_all(&target_dir).map_err(|error| {
+            CoreError::runtime(format!("failed to create target directory: {error}"))
+        })?;
         let file_name = source_path.file_name().ok_or_else(|| {
             CoreError::validation(format!(
                 "source path does not have a file name: {}",
@@ -390,13 +469,26 @@ impl LocalServerRuntime {
 
         let path = self.server_dir(server).join(".scsl").join("schedules.json");
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| CoreError::runtime(format!("failed to create schedules directory: {error}")))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                CoreError::runtime(format!("failed to create schedules directory: {error}"))
+            })?;
         }
-        let normalized = serde_json::to_string_pretty(&payload)
-            .map_err(|error| CoreError::runtime(format!("failed to encode schedules json: {error}")))?;
+        let normalized = serde_json::to_string_pretty(&payload).map_err(|error| {
+            CoreError::runtime(format!("failed to encode schedules json: {error}"))
+        })?;
         fs::write(&path, format!("{normalized}\n"))
             .map_err(|error| CoreError::runtime(format!("failed to write schedules.json: {error}")))
+    }
+
+    pub fn remove_server_directory(&self, server: &ServerInstance) -> Result<(), CoreError> {
+        if !server.is_local() {
+            return Err(CoreError::unsupported(
+                "local CLI runtime only supports local servers",
+            ));
+        }
+
+        let path = self.server_dir(server);
+        remove_existing_path(&path)
     }
 
     fn collect_server_files(
@@ -408,8 +500,9 @@ impl LocalServerRuntime {
         for child in fs::read_dir(current)
             .map_err(|error| CoreError::runtime(format!("failed to read directory: {error}")))?
         {
-            let child = child
-                .map_err(|error| CoreError::runtime(format!("failed to inspect directory entry: {error}")))?;
+            let child = child.map_err(|error| {
+                CoreError::runtime(format!("failed to inspect directory entry: {error}"))
+            })?;
             let path = child.path();
             let name = child.file_name();
             let name = name.to_string_lossy();
@@ -417,12 +510,14 @@ impl LocalServerRuntime {
                 continue;
             }
 
-            let metadata = child
-                .metadata()
-                .map_err(|error| CoreError::runtime(format!("failed to inspect file metadata: {error}")))?;
+            let metadata = child.metadata().map_err(|error| {
+                CoreError::runtime(format!("failed to inspect file metadata: {error}"))
+            })?;
             let relative_path = path
                 .strip_prefix(root)
-                .map_err(|error| CoreError::runtime(format!("failed to compute relative path: {error}")))?
+                .map_err(|error| {
+                    CoreError::runtime(format!("failed to compute relative path: {error}"))
+                })?
                 .to_string_lossy()
                 .replace('\\', "/");
             let is_directory = metadata.is_dir();
@@ -555,13 +650,15 @@ fn copy_path_recursively(source: &Path, destination: &Path) -> Result<(), CoreEr
     let metadata = fs::metadata(source)
         .map_err(|error| CoreError::runtime(format!("failed to inspect source path: {error}")))?;
     if metadata.is_dir() {
-        fs::create_dir_all(destination)
-            .map_err(|error| CoreError::runtime(format!("failed to create destination directory: {error}")))?;
-        for child in fs::read_dir(source)
-            .map_err(|error| CoreError::runtime(format!("failed to read source directory: {error}")))?
-        {
-            let child = child
-                .map_err(|error| CoreError::runtime(format!("failed to inspect source directory entry: {error}")))?;
+        fs::create_dir_all(destination).map_err(|error| {
+            CoreError::runtime(format!("failed to create destination directory: {error}"))
+        })?;
+        for child in fs::read_dir(source).map_err(|error| {
+            CoreError::runtime(format!("failed to read source directory: {error}"))
+        })? {
+            let child = child.map_err(|error| {
+                CoreError::runtime(format!("failed to inspect source directory entry: {error}"))
+            })?;
             let child_path = child.path();
             let child_destination = destination.join(child.file_name());
             copy_path_recursively(&child_path, &child_destination)?;
@@ -570,8 +667,9 @@ fn copy_path_recursively(source: &Path, destination: &Path) -> Result<(), CoreEr
     }
 
     if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| CoreError::runtime(format!("failed to create destination parent: {error}")))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            CoreError::runtime(format!("failed to create destination parent: {error}"))
+        })?;
     }
     fs::copy(source, destination)
         .map(|_| ())

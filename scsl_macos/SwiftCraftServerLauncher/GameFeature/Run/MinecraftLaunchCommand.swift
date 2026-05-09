@@ -25,9 +25,11 @@ struct MinecraftLaunchCommand {
     func launchGameThrowing() async throws {
         // 在启动游戏前验证并刷新Token（如果需要）
         let validatedPlayer = try await validatePlayerTokenBeforeLaunch()
-
-        let command = game.launchCommand
-        try await launchGameProcess(command: replaceAuthParameters(command: command, with: validatedPlayer))
+        let plan = try await GameLaunchCoreService.buildLaunchPlan(
+            game: game,
+            player: validatedPlayer
+        )
+        try await launchGameProcess(plan: plan)
     }
 
     /// 在启动游戏前验证玩家Token
@@ -84,100 +86,14 @@ struct MinecraftLaunchCommand {
         }
     }
 
-    private func replaceAuthParameters(command: [String], with validatedPlayer: Player?) -> [String] {
-        guard let player = validatedPlayer else {
-            Logger.shared.warning("没有验证的玩家，使用默认认证参数")
-            return replaceGameParameters(command: command)
-        }
-
-        // 使用 NSMutableString 避免链式调用创建多个临时字符串
-        let authReplacedCommand = command.map { arg -> String in
-            let mutableArg = NSMutableString(string: arg)
-            mutableArg.replaceOccurrences(
-                of: "${auth_player_name}",
-                with: player.name,
-                options: [],
-                range: NSRange(location: 0, length: mutableArg.length)
-            )
-            mutableArg.replaceOccurrences(
-                of: "${auth_uuid}",
-                with: player.id,
-                options: [],
-                range: NSRange(location: 0, length: mutableArg.length)
-            )
-            mutableArg.replaceOccurrences(
-                of: "${auth_access_token}",
-                with: player.authAccessToken,
-                options: [],
-                range: NSRange(location: 0, length: mutableArg.length)
-            )
-            mutableArg.replaceOccurrences(
-                of: "${auth_xuid}",
-                with: player.authXuid,
-                options: [],
-                range: NSRange(location: 0, length: mutableArg.length)
-            )
-            return mutableArg as String
-        }
-
-        return replaceGameParameters(command: authReplacedCommand)
-    }
-
-    private func replaceGameParameters(command: [String]) -> [String] {
-        let settings = GameSettingsManager.shared
-
-        // 内存设置：优先使用游戏配置，游戏没配置则使用全局
-        let xms = game.xms > 0 ? game.xms : settings.globalXms
-        let xmx = game.xmx > 0 ? game.xmx : settings.globalXmx
-
-        // 使用 NSMutableString 避免链式调用创建多个临时字符串
-        var replacedCommand = command.map { arg -> String in
-            let mutableArg = NSMutableString(string: arg)
-            let xmsString = "\(xms)"
-            let xmxString = "\(xmx)"
-            mutableArg.replaceOccurrences(
-                of: "${xms}",
-                with: xmsString,
-                options: [],
-                range: NSRange(location: 0, length: mutableArg.length)
-            )
-            mutableArg.replaceOccurrences(
-                of: "${xmx}",
-                with: xmxString,
-                options: [],
-                range: NSRange(location: 0, length: mutableArg.length)
-            )
-            return mutableArg as String
-        }
-
-        // 在运行时拼接高级设置的JVM参数
-        // 逻辑：如果有自定义JVM参数则直接使用，否则使用垃圾回收器+性能优化参数
-        if !game.jvmArguments.isEmpty {
-            // 将自定义JVM参数插入到命令数组的开头（java命令之后），并去重保持顺序
-            let advancedArgs = game.jvmArguments
-                .components(separatedBy: " ")
-                .filter { !$0.isEmpty }
-            var seen = Set<String>()
-            let uniqueAdvancedArgs = advancedArgs.filter { arg in
-                if seen.contains(arg) { return false }
-                seen.insert(arg)
-                return true
-            }
-            replacedCommand.insert(contentsOf: uniqueAdvancedArgs, at: 0)
-        }
-
-        return replacedCommand
-    }
-
     /// 启动游戏进程
-    /// - Parameter command: 启动命令数组
+    /// - Parameter plan: 启动计划
     /// - Throws: GlobalError 当启动失败时
-    private func launchGameProcess(command: [String]) async throws {
+    private func launchGameProcess(plan: GameLaunchPlanResponse) async throws {
         if game.modLoader != "vanilla" {
             AVCaptureDevice.requestAccess(for: .audio) { _ in }
         }
-        // 直接使用游戏指定的Java路径
-        let javaExecutable = game.javaPath
+        let javaExecutable = plan.javaPath
         guard !javaExecutable.isEmpty else {
             throw GlobalError.configuration(
                 chineseMessage: "Java 路径未设置",
@@ -186,27 +102,20 @@ struct MinecraftLaunchCommand {
             )
         }
 
-        // 获取游戏工作目录
-        let gameWorkingDirectory = AppPaths.profileDirectory(gameName: game.gameName)
+        let gameWorkingDirectory = URL(fileURLWithPath: plan.workingDirectory)
 
-        Logger.shared.info("启动游戏进程: \(javaExecutable) \(command.joined(separator: " "))")
+        Logger.shared.info("启动游戏进程: \(javaExecutable) \(plan.arguments.joined(separator: " "))")
         Logger.shared.info("游戏工作目录: \(gameWorkingDirectory.path)")
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: javaExecutable)
-        process.arguments = command
+        process.arguments = plan.arguments
         process.currentDirectoryURL = gameWorkingDirectory
 
-        // 设置环境变量（高级设置）
-        if !game.environmentVariables.isEmpty {
+        if !plan.environment.isEmpty {
             var env = ProcessInfo.processInfo.environment
-            let envLines = game.environmentVariables.components(separatedBy: "\n")
-            for line in envLines {
-                if let equalIndex = line.firstIndex(of: "=") {
-                    let key = String(line[..<equalIndex])
-                    let value = String(line[line.index(after: equalIndex)...])
-                    env[key] = value
-                }
+            for (key, value) in plan.environment {
+                env[key] = value
             }
             process.environment = env
         }

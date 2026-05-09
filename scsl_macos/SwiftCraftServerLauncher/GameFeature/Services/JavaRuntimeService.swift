@@ -254,25 +254,19 @@ class JavaRuntimeService {
     /// - Parameter urlString: URL字符串
     /// - Returns: 下载的数据
     private func fetchDataFromURL(_ urlString: String) async throws -> Data {
-        guard let url = URL(string: urlString) else {
+        guard URL(string: urlString) != nil else {
             throw GlobalError.validation(
                 chineseMessage: "无效的URL",
                 i18nKey: "error.validation.invalid_url",
                 level: .notification
             )
         }
-
-        let (data, response) = try await downloadSession.data(from: url)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw GlobalError.network(
-                chineseMessage: "下载失败",
-                i18nKey: "error.network.download_failed",
-                level: .notification
-            )
+        let payload = try await ScslCoreCLIService.shared.run(
+            arguments: ["game", "fetch-json", "--url", urlString]
+        )
+        guard let data = payload.data(using: .utf8) else {
+            throw ScslCoreCLIError.invalidUTF8
         }
-
         return data
     }
     /// 获取当前macOS平台标识
@@ -283,17 +277,34 @@ class JavaRuntimeService {
     /// 为文件设置执行权限
     /// - Parameter filePath: 文件路径
     private func setExecutablePermission(for filePath: URL) throws {
-        let fileManager = FileManager.default
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<Void, Error>?
 
-        // 获取当前文件权限
-        let currentAttributes = try fileManager.attributesOfItem(atPath: filePath.path)
-        var currentPermissions = currentAttributes[.posixPermissions] as? UInt16 ?? 0o644
+        Task {
+            do {
+                let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
+                    arguments: ["game", "set-executable", "--path", filePath.path]
+                )
+                result = .success(())
+            } catch {
+                result = .failure(error)
+            }
+            semaphore.signal()
+        }
 
-        // 添加执行权限 (owner, group, other)
-        currentPermissions |= 0o111
-
-        // 设置新的权限
-        try fileManager.setAttributes([.posixPermissions: currentPermissions], ofItemAtPath: filePath.path)
+        semaphore.wait()
+        switch result {
+        case .success:
+            return
+        case .failure(let error):
+            throw error
+        case .none:
+            throw GlobalError.unknown(
+                chineseMessage: "CLI 未返回结果",
+                i18nKey: "error.unknown.generic",
+                level: .notification
+            )
+        }
     }
 
     /// 下载当前架构的特供Java运行时（从Zulu JDK）
@@ -308,18 +319,22 @@ class JavaRuntimeService {
         // 下载zip文件到临时位置
         let tempZipPath = targetDirectory.appendingPathComponent("temp_java.zip")
 
-        // 下载zip文件（带字节大小进度）
-        try await downloadZipWithProgress(
-            from: url,
-            to: tempZipPath,
-            fileName: "\(version).zip"
+        await progressActor.callProgressUpdate("\(version).zip", 0, 1)
+
+        _ = try await DownloadManager.downloadFile(
+            urlString: url.absoluteString,
+            destinationURL: tempZipPath
         )
 
-        // 解压zip文件
-        try await extractAndProcessBundledJavaRuntime(
-            zipPath: tempZipPath,
-            targetDirectory: targetDirectory
+        let response: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: [
+                "game", "extract-zulu-runtime",
+                "--zip-path", tempZipPath.path,
+                "--target-directory", targetDirectory.appendingPathComponent("jre.bundle").path,
+            ]
         )
+        _ = response
+        try? FileManager.default.removeItem(at: tempZipPath)
 
         // 更新进度 - 完成
         await progressActor.callProgressUpdate("Java运行时 \(version) 安装完成", 1, 1)

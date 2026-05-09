@@ -83,18 +83,33 @@ final class MirrorSourceSettingsManager: ObservableObject {
     }
 
     private func loadSources() {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let decoded = try? JSONDecoder().decode([MirrorSourceConfig].self, from: data),
-              !decoded.isEmpty else {
-            sources = defaultSources()
+        if let coreSources = try? CoreSettingsBridge.read([MirrorSourceConfig].self, scope: .mirror),
+           !coreSources.isEmpty {
+            sources = coreSources
             return
         }
-        sources = decoded
+
+        if let data = UserDefaults.standard.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode([MirrorSourceConfig].self, from: data),
+           !decoded.isEmpty {
+            sources = decoded
+            persistSources()
+            return
+        }
+
+        sources = defaultSources()
+        persistSources()
     }
 
     private func persistSources() {
-        guard let data = try? JSONEncoder().encode(sources) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
+        if let data = try? JSONEncoder().encode(sources) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+        do {
+            try CoreSettingsBridge.write(sources, scope: .mirror)
+        } catch {
+            Logger.shared.warning("写入 core mirror settings 失败: \(error.localizedDescription)")
+        }
     }
 
     private func defaultSources() -> [MirrorSourceConfig] {

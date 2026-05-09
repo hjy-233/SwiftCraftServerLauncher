@@ -23,6 +23,9 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install linters
         run: brew install swiftlint swiftformat
 
@@ -37,6 +40,15 @@ jobs:
 
       - name: SwiftLint (checkstyle)
         run: swiftlint lint --strict --reporter checkstyle > swiftlint.xml
+
+      - name: Rust fmt
+        run: cargo fmt --manifest-path scsl_core/Cargo.toml --all --check
+
+      - name: Rust build
+        run: cargo build --manifest-path scsl_core/Cargo.toml -p scsl_cli
+
+      - name: Rust tests
+        run: cargo test --manifest-path scsl_core/Cargo.toml -p scsl_cli --no-run
 
       - name: Reviewdog (PR comments)
         if: github.event_name == 'pull_request'
@@ -77,12 +89,27 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bundled CLI
+        run: cargo build --manifest-path scsl_core/Cargo.toml -p scsl_cli
+
       - name: Build
         run: |
           xcodebuild \
-            -project SwiftCraftServerLauncher.xcodeproj \
+            -project scsl_macos/SwiftCraftServerLauncher.xcodeproj \
             -scheme SwiftCraftLauncher \
             -configuration Debug \
             -destination "platform=macOS" \
             -skipPackagePluginValidation \
             build
+
+      - name: Verify bundled CLI
+        run: |
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -path "*Build/Products/Debug/SwiftCraftServerLauncher.app" | head -n 1)
+          if [[ -z "$APP_PATH" ]]; then
+            echo "❌ 未找到 Debug app 产物"
+            exit 1
+          fi
+          test -x "$APP_PATH/Contents/Resources/cli/scsl"

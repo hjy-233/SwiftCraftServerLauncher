@@ -2,9 +2,10 @@ import Foundation
 
 enum ServerFileService {
     static func listFiles(server: ServerInstance) async throws -> [ServerFileItem] {
-        let output = try await ScslCoreCLIService.shared.run(arguments: ["server", "files", "list", server.id])
-        let data = Data(output.utf8)
-        let entries = try JSONDecoder().decode([LocalServerFileEntry].self, from: data)
+        let response: ScslCoreCLIEnvelope<[LocalServerFileEntry]> = try await ScslCoreCLIService.shared.runJSON(
+            arguments: ["server", "files", "list", server.id]
+        )
+        let entries = response.data
         return entries.map { entry in
             ServerFileItem(
                 url: nil,
@@ -16,44 +17,45 @@ enum ServerFileService {
     }
 
     static func readFile(server: ServerInstance, relativePath: String) async throws -> String {
-        try await ScslCoreCLIService.shared.run(arguments: [
+        let response: ScslCoreCLIEnvelope<ServerFileReadResponse> = try await ScslCoreCLIService.shared.runJSON(arguments: [
             "server", "files", "read", server.id, "--path", relativePath
         ])
+        return response.data.content
     }
 
     static func writeFile(server: ServerInstance, relativePath: String, content: String) async throws {
-        _ = try await ScslCoreCLIService.shared.run(
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(
             arguments: ["server", "files", "write", server.id, "--path", relativePath],
             standardInput: content
         )
     }
 
     static func createDirectory(server: ServerInstance, relativePath: String) async throws {
-        _ = try await ScslCoreCLIService.shared.run(arguments: [
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(arguments: [
             "server", "files", "mkdir", server.id, "--path", relativePath
         ])
     }
 
     static func createFile(server: ServerInstance, relativePath: String) async throws {
-        _ = try await ScslCoreCLIService.shared.run(arguments: [
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(arguments: [
             "server", "files", "touch", server.id, "--path", relativePath
         ])
     }
 
     static func movePath(server: ServerInstance, from: String, to: String) async throws {
-        _ = try await ScslCoreCLIService.shared.run(arguments: [
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(arguments: [
             "server", "files", "move", server.id, "--from", from, "--to", to
         ])
     }
 
     static func deletePath(server: ServerInstance, relativePath: String) async throws {
-        _ = try await ScslCoreCLIService.shared.run(arguments: [
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(arguments: [
             "server", "files", "delete", server.id, "--path", relativePath
         ])
     }
 
     static func importPath(server: ServerInstance, sourceURL: URL, targetDirectory: String) async throws {
-        _ = try await ScslCoreCLIService.shared.run(arguments: [
+        let _: ScslCoreCLIEnvelope<EmptyCLIResponse> = try await ScslCoreCLIService.shared.runJSON(arguments: [
             "server", "files", "import", server.id,
             "--source", sourceURL.path,
             "--directory", targetDirectory,
@@ -65,4 +67,14 @@ private struct LocalServerFileEntry: Decodable {
     let relativePath: String
     let isDirectory: Bool
     let fileSize: UInt64?
+
+    private enum CodingKeys: String, CodingKey {
+        case relativePath = "relative_path"
+        case isDirectory = "is_directory"
+        case fileSize = "file_size"
+    }
+}
+
+private struct ServerFileReadResponse: Decodable {
+    let content: String
 }

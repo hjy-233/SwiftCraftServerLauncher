@@ -170,7 +170,16 @@ class ServerCreationViewModel: ObservableObject {
             return name
         }()
 
+        var shouldCleanupServerDirectory = true
         do {
+            Logger.shared.debug("建服开始: name=\(name) type=\(selectedServerType.rawValue) mirror=\(selectedMirrorSource.rawValue)")
+            guard selectedNode.isLocal else {
+                throw GlobalError.validation(
+                    chineseMessage: "远程节点建服功能已停用，请使用本地节点",
+                    i18nKey: "error.validation.server_not_selected",
+                    level: .notification
+                )
+            }
             await MainActor.run {
                 serverSetupService.downloadState.reset()
                 serverSetupService.downloadState.isDownloading = true
@@ -181,168 +190,45 @@ class ServerCreationViewModel: ObservableObject {
                 self.updateParentState()
             }
 
-            var serverJar = "server.jar"
-            let javaPath: String
-            let iconImageFileName: String?
-            if selectedNode.isLocal {
-                let serverDir = try serverSetupService.createServerDirectory(name: directoryName)
-                iconImageFileName = try persistServerIconIfNeeded(serverName: name, baseDirectory: serverDir)
-                if selectedServerType == .custom, let url = customJarURL {
-                    guard url.startAccessingSecurityScopedResource() else {
-                        throw GlobalError.fileSystem(
-                            chineseMessage: "无法访问自定义 Jar 文件",
-                            i18nKey: "error.filesystem.file_access_failed",
-                            level: .notification
-                        )
-                    }
-                    defer { url.stopAccessingSecurityScopedResource() }
-                    serverJar = try serverSetupService.copyCustomJar(from: url, to: serverDir)
-                    // 自定义 Jar 不强依赖版本元数据，延迟到启动时再解析/回退 Java。
-                    javaPath = ""
-                } else {
-                    if selectedMirrorSource == .polars || selectedMirrorSource == .custom {
-                        serverJar = try await ServerDownloadService.downloadMirrorJar(
-                            downloadURL: selectedMirrorDownloadURL,
-                            fileName: selectedMirrorFileName,
-                            serverDir: serverDir
-                        )
-                        javaPath = ""
-                    } else {
-                        serverJar = try await ServerDownloadService.downloadServerJar(
-                            serverType: selectedServerType,
-                            gameVersion: selectedGameVersion,
-                            loaderVersion: selectedLoaderVersion,
-                            serverDir: serverDir,
-                            mirror: ServerDownloadService.MirrorDownloadOptions(
-                                source: selectedMirrorSource,
-                                coreName: selectedFastMirrorCoreName,
-                                fileName: selectedMirrorFileName,
-                                downloadURL: selectedMirrorDownloadURL,
-                                baseURL: selectedMirrorBaseURL
-                            )
-                        )
-                        let javaVersion = try await ServerDownloadService.resolveJavaVersion(gameVersion: selectedGameVersion)
-                        javaPath = await JavaManager.shared.ensureJavaExists(
-                            version: javaVersion.component,
-                            minimumMajorVersion: javaVersion.majorVersion
-                        )
-                    }
-                }
-                if hasAcceptedEula {
-                    try serverSetupService.acceptEula(in: serverDir)
-                }
-
-                if selectedServerType == .forge {
-                    let tempServer = ServerInstance(
-                        id: serverUUID,
-                        name: name,
-                        directoryName: directoryName,
-                        serverType: selectedServerType,
-                        gameVersion: selectedGameVersion,
-                        loaderVersion: selectedLoaderVersion,
-                        serverJar: serverJar,
-                        javaPath: javaPath,
-                        nodeId: selectedNode.id
-                    )
-                    try await ForgeInstallerService.install(server: tempServer, serverDir: serverDir)
-                }
-            } else {
-                let localRemoteServerDir = AppPaths.remoteNodeServersDirectory(nodeId: selectedNode.id)
-                    .appendingPathComponent(name, isDirectory: true)
-                try? FileManager.default.createDirectory(at: localRemoteServerDir, withIntermediateDirectories: true)
-                iconImageFileName = try persistServerIconIfNeeded(serverName: name, baseDirectory: localRemoteServerDir)
-                if selectedServerType == .custom {
-                    throw GlobalError.validation(
-                        chineseMessage: "远程节点暂不支持上传自定义 Jar",
-                        i18nKey: "error.validation.server_not_selected",
-                        level: .notification
-                    )
-                }
-                if selectedServerType == .forge {
-                    throw GlobalError.validation(
-                        chineseMessage: "远程节点暂不支持 Forge 安装流程",
-                        i18nKey: "error.validation.server_not_selected",
-                        level: .notification
-                    )
-                }
-                let target = try await ServerDownloadService.resolveDownloadTargetForRemote(
-                    serverType: selectedServerType,
-                    gameVersion: selectedGameVersion,
-                    loaderVersion: selectedLoaderVersion,
-                    mirror: ServerDownloadService.MirrorDownloadOptions(
-                        source: selectedMirrorSource,
-                        coreName: selectedFastMirrorCoreName,
-                        fileName: selectedMirrorFileName,
-                        downloadURL: selectedMirrorDownloadURL,
-                        baseURL: selectedMirrorBaseURL
-                    )
-                )
-                let alreadyPrepared = await SSHNodeService.waitForRemoteServerJar(
-                    node: selectedNode,
-                    serverName: name,
-                    expectedJarName: target.fileName,
-                    timeoutSeconds: 4,
-                    pollIntervalSeconds: 2
-                )
-
-                if !alreadyPrepared {
-                    _ = await prepareRemoteServerWithTimeout(
-                        node: selectedNode,
-                        serverName: name,
-                        target: target
-                    )
-                }
-
-                let hasJar = await SSHNodeService.waitForRemoteServerJar(
-                    node: selectedNode,
-                    serverName: name,
-                    expectedJarName: target.fileName,
-                    timeoutSeconds: 12,
-                    pollIntervalSeconds: 2
-                )
-                guard hasJar else {
-                    throw GlobalError.validation(
-                        chineseMessage: "远程目录未检测到 Jar，请检查节点路径与下载权限",
-                        i18nKey: "error.validation.server_not_selected",
-                        level: .notification
-                    )
-                }
-                serverJar = target.fileName
-                javaPath = "java"
-            }
-
-            let server = ServerInstance(
-                id: serverUUID,
+            let iconImageFileName = plannedServerIconFileName()
+            Logger.shared.debug("建服准备请求: directory=\(directoryName) icon=\(iconImageFileName ?? "nil")")
+            let creation = try await createLocalServer(
+                serverUUID: serverUUID,
                 name: name,
                 directoryName: directoryName,
-                iconName: selectedServerIcon,
-                iconImageFileName: iconImageFileName,
-                serverType: resolvedServerType(),
-                gameVersion: selectedGameVersion,
-                loaderVersion: selectedLoaderVersion,
-                serverJar: serverJar,
-                javaPath: javaPath,
-                nodeId: selectedNode.id,
-                consoleMode: consoleMode,
-                rconPort: Int(rconPortText) ?? 25575,
-                rconPassword: rconPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+                iconImageFileName: iconImageFileName
             )
+            Logger.shared.debug("建服 CLI 返回: id=\(creation.id) dir=\(creation.directoryName) jar=\(creation.serverJar)")
+            shouldCleanupServerDirectory = false
+            try persistServerIconIfNeeded(
+                baseDirectory: AppPaths.serverDirectory(serverName: creation.directoryName),
+                fileName: iconImageFileName
+            )
+            Logger.shared.info("本地服务器创建完成: \(creation.id) / \(creation.serverJar)")
 
-            serverRepository.addServerSilently(server)
+            serverRepository.reloadServers()
         } catch {
-            if selectedNode.isLocal {
-                let serverDir = AppPaths.serverDirectory(serverName: directoryName)
-                if FileManager.default.fileExists(atPath: serverDir.path) {
-                    try? FileManager.default.removeItem(at: serverDir)
-                }
+            Logger.shared.error("建服失败: \(error.localizedDescription)")
+            let serverDir = AppPaths.serverDirectory(serverName: directoryName)
+            if FileManager.default.fileExists(atPath: serverDir.path),
+               shouldCleanupServerDirectory {
+                try? FileManager.default.removeItem(at: serverDir)
             }
             GlobalErrorHandler.shared.handle(error)
         }
     }
 
-    private func persistServerIconIfNeeded(serverName: String, baseDirectory: URL) throws -> String? {
+    private func plannedServerIconFileName() -> String? {
         guard let selectedServerIconURL else {
             return nil
+        }
+        let ext = selectedServerIconURL.pathExtension.isEmpty ? "png" : selectedServerIconURL.pathExtension.lowercased()
+        return ".scsl-server-icon.\(ext)"
+    }
+
+    private func persistServerIconIfNeeded(baseDirectory: URL, fileName: String?) throws {
+        guard let selectedServerIconURL, let fileName else {
+            return
         }
         let didAccessSecurityScoped = selectedServerIconURL.startAccessingSecurityScopedResource()
         defer {
@@ -351,49 +237,96 @@ class ServerCreationViewModel: ObservableObject {
             }
         }
 
-        let ext = selectedServerIconURL.pathExtension.isEmpty ? "png" : selectedServerIconURL.pathExtension.lowercased()
-        let fileName = ".scsl-server-icon.\(ext)"
         let destination = baseDirectory.appendingPathComponent(fileName)
         if FileManager.default.fileExists(atPath: destination.path) {
             try? FileManager.default.removeItem(at: destination)
         }
         try FileManager.default.copyItem(at: selectedServerIconURL, to: destination)
-        return fileName
     }
 
-    private func prepareRemoteServerWithTimeout(
-        node: ServerNode,
-        serverName: String,
-        target: ServerDownloadService.DownloadTarget
-    ) async -> Bool {
-        let timeoutSeconds: UInt64 = 20
-        return await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                do {
-                    try await SSHNodeService.prepareRemoteServerDirectoryAndDownload(
-                        node: node,
-                        serverName: serverName,
-                        target: target
-                    )
-                    return true
-                } catch {
-                    let message = GlobalError.from(error).chineseMessage
-                    Logger.shared.warning("远程下载异常，转入目录检测: \(message)")
-                    return false
-                }
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
-                Logger.shared.warning("远程下载确认超时，转入目录检测: \(serverName)")
-                return false
-            }
+    private func createLocalServer(
+        serverUUID: UUID,
+        name: String,
+        directoryName: String,
+        iconImageFileName: String?
+    ) async throws -> LocalServerCreateResponse {
+        let source = try await buildLocalCreateSource()
+        let javaPath = try await resolveLocalJavaPath()
+        let request = LocalServerCreateRequest(
+            id: serverUUID.uuidString,
+            name: name,
+            directoryName: directoryName,
+            iconName: selectedServerIcon,
+            iconImageFileName: iconImageFileName,
+            serverType: resolvedServerType(),
+            gameVersion: selectedGameVersion,
+            loaderVersion: selectedLoaderVersion,
+            launchCommand: "",
+            javaPath: javaPath,
+            jvmArguments: "",
+            xms: 0,
+            xmx: 0,
+            consoleMode: consoleMode,
+            rconPort: Int(rconPortText) ?? 25575,
+            rconPassword: rconPassword.trimmingCharacters(in: .whitespacesAndNewlines),
+            acceptEula: hasAcceptedEula,
+            source: source
+        )
+        Logger.shared.debug("建服请求编码前: javaPath=\(javaPath) gameVersion=\(selectedGameVersion) loader=\(selectedLoaderVersion)")
+        return try await ServerCreationCoreService.createLocal(request: request)
+    }
 
-            if let result = await group.next() {
-                group.cancelAll()
-                return result
+    private func buildLocalCreateSource() async throws -> LocalServerCreateSource {
+        if selectedServerType == .custom, let url = customJarURL {
+            guard url.startAccessingSecurityScopedResource() else {
+                throw GlobalError.fileSystem(
+                    chineseMessage: "无法访问自定义 Jar 文件",
+                    i18nKey: "error.filesystem.file_access_failed",
+                    level: .notification
+                )
             }
-            return false
+            defer { url.stopAccessingSecurityScopedResource() }
+            return .customJar(sourcePath: url.path)
         }
+
+        if selectedMirrorSource == .polars || selectedMirrorSource == .custom {
+            return .download(
+                url: selectedMirrorDownloadURL,
+                fileName: selectedMirrorFileName,
+                sha1: nil,
+                headers: nil
+            )
+        }
+
+        let target = try await ServerDownloadService.resolveDownloadTargetForRemote(
+            serverType: selectedServerType,
+            gameVersion: selectedGameVersion,
+            loaderVersion: selectedLoaderVersion,
+            mirror: ServerDownloadService.MirrorDownloadOptions(
+                source: selectedMirrorSource,
+                coreName: selectedFastMirrorCoreName,
+                fileName: selectedMirrorFileName,
+                downloadURL: selectedMirrorDownloadURL,
+                baseURL: selectedMirrorBaseURL
+            )
+        )
+        return .download(
+            url: target.url.absoluteString,
+            fileName: target.fileName,
+            sha1: target.sha1,
+            headers: target.headers
+        )
+    }
+
+    private func resolveLocalJavaPath() async throws -> String {
+        if selectedServerType == .custom || selectedMirrorSource == .polars || selectedMirrorSource == .custom {
+            return ""
+        }
+        let javaVersion = try await ServerDownloadService.resolveJavaVersion(gameVersion: selectedGameVersion)
+        return await JavaManager.shared.ensureJavaExists(
+            version: javaVersion.component,
+            minimumMajorVersion: javaVersion.majorVersion
+        )
     }
 
     private func handleDuplicateName() {
