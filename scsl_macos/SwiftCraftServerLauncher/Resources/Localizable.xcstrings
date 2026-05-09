@@ -913,23 +913,6 @@
       }
     },
     "by %@": {},
-    "command.palette.action.download_center": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Download Center"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下载中心"
-          }
-        }
-      }
-    },
     "command.palette.action.settings": {
       "extractionState": "manual",
       "localizations": {
@@ -1731,23 +1714,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "取消下载"
-          }
-        }
-      }
-    },
-    "download.center": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Download Center"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下载中心"
           }
         }
       }
