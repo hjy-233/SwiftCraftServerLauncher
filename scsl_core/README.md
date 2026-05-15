@@ -6,6 +6,7 @@
 
 - 本地服务器管理 core
 - `scsl` CLI
+- `scsl_http` HTTP 后端
 - 本地后台 agent
 - 给 macOS app 复用的持久化 / 启动 / 下载 / 日志能力
 
@@ -51,3 +52,6 @@ scsl --db /path/to/data.db --working-path /path/to/working-dir server list
 
 - [scsl_cli.md](./docs/scsl_cli.md)
 
+HTTP 后端文档见：
+
+- [scsl_http.md](./docs/scsl_http.md)
