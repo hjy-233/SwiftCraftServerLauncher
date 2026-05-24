@@ -8,6 +8,7 @@ public struct AppearanceSettingsView: View {
 
     private let defaultThemeMode: ThemeMode = .system
     private let defaultEnableConsoleColoredOutput = true
+    private let defaultServerInterfaceMode: ServerInterfaceMode = .simple
     private let defaultServerFileManagerShowShortcuts = true
     private let defaultOpenServerInNewWindow = false
     private let defaultShowServerStatusMenuBar = true
@@ -127,6 +128,24 @@ public struct AppearanceSettingsView: View {
                 }
 
                 Group {
+                    LabeledContent("settings.appearance.server_interface_mode".localized()) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Picker("", selection: $generalSettings.serverInterfaceMode) {
+                                ForEach(ServerInterfaceMode.allCases) { mode in
+                                    Text(mode.localizedName).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(width: 220)
+
+                            resetIconButton(disabled: generalSettings.serverInterfaceMode == defaultServerInterfaceMode) {
+                                generalSettings.serverInterfaceMode = defaultServerInterfaceMode
+                            }
+                        }
+                    }
+                    .labeledContentStyle(.custom)
+
                     LabeledContent("settings.appearance.server_tabs".localized()) {
                         Menu {
                             ForEach(tabOptions) { option in

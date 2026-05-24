@@ -12,6 +12,17 @@ public enum InterfaceLayoutStyle: String, CaseIterable {
     }
 }
 
+public enum ServerInterfaceMode: String, CaseIterable, Identifiable {
+    case simple
+    case workspace
+
+    public var id: String { rawValue }
+
+    public var localizedName: String {
+        "settings.appearance.server_interface_mode.\(rawValue)".localized()
+    }
+}
+
 public enum ThemeMode: String, CaseIterable {
     case light = "light"
     case dark = "dark"
@@ -249,6 +260,11 @@ class GeneralSettingsManager: ObservableObject, WorkingPathProviding {
     }
 
     // MARK: - 服务器管理外观
+
+    @AppStorage("serverInterfaceMode")
+    var serverInterfaceMode: ServerInterfaceMode = .simple {
+        didSet { objectWillChange.send() }
+    }
 
     @AppStorage("serverTabConsoleEnabled")
     var serverTabConsoleEnabled: Bool = true {

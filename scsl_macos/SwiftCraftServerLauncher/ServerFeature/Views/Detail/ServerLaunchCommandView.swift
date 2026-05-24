@@ -1,23 +1,9 @@
 import SwiftUI
 
-private enum ServerDetailSection: String, CaseIterable, Identifiable {
-    case console
-    case serverConfig
-    case players
-    case worlds
-    case mods
-    case plugins
-    case schedules
-    case logs
-
-    var id: String { rawValue }
-}
-
 struct ServerLaunchCommandView: View {
     let server: ServerInstance
     @EnvironmentObject var detailState: ResourceDetailState
     @StateObject private var generalSettings = GeneralSettingsManager.shared
-    @Namespace private var sectionIndicatorNamespace
     private var supportsMods: Bool {
         server.serverType == .fabric || server.serverType == .forge
     }
@@ -51,26 +37,36 @@ struct ServerLaunchCommandView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(sectionItems) { item in
-                        sectionRow(
-                            section: item.section,
-                            title: item.title,
-                            icon: item.icon,
-                            isEnabled: item.isEnabled,
-                            disabledHint: item.disabledHint
-                        )
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(sectionItems) { item in
+                    Button {
+                        guard item.isEnabled else { return }
+                        detailState.serverPanelSection = item.section.rawValue
+                    } label: {
+                        Label(item.title, systemImage: item.icon)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.large)
+                    .foregroundStyle(item.isEnabled ? .primary : .tertiary)
+                    .disabled(!item.isEnabled)
+                }
+
+                ForEach(sectionItems.filter { !$0.isEnabled && $0.disabledHint != nil }) { item in
+                    if let disabledHint = item.disabledHint {
+                        Text(disabledHint)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 26)
                     }
                 }
-                .frame(width: 180, alignment: .topLeading)
             }
-
-            Spacer()
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.clear)
+        .frame(minWidth: 170, idealWidth: 180, maxWidth: 220, maxHeight: .infinity, alignment: .top)
         .onAppear {
             normalizeSelectedSectionIfNeeded()
         }
@@ -88,148 +84,8 @@ struct ServerLaunchCommandView: View {
         }
     }
 
-    private struct SectionItem: Identifiable {
-        let section: ServerDetailSection
-        let title: String
-        let icon: String
-        let isEnabled: Bool
-        let disabledHint: String?
-
-        var id: String { section.rawValue }
-    }
-
-    private var sectionItems: [SectionItem] {
-        var items: [SectionItem] = []
-        if generalSettings.serverTabConsoleEnabled {
-            items.append(.init(
-                section: .console,
-                title: "server.console.title".localized(),
-                icon: "terminal",
-                isEnabled: true,
-                disabledHint: nil
-            ))
-        }
-        if generalSettings.serverTabConfigEnabled {
-            items.append(.init(
-                section: .serverConfig,
-                title: "server.launch.server_config".localized(),
-                icon: "folder",
-                isEnabled: true,
-                disabledHint: nil
-            ))
-        }
-        if generalSettings.serverTabPlayersEnabled {
-            items.append(.init(
-                section: .players,
-                title: "server.launch.players".localized(),
-                icon: "person.3",
-                isEnabled: true,
-                disabledHint: nil
-            ))
-        }
-        if generalSettings.serverTabWorldsEnabled {
-            items.append(.init(
-                section: .worlds,
-                title: "server.launch.worlds".localized(),
-                icon: "globe.americas",
-                isEnabled: true,
-                disabledHint: nil
-            ))
-        }
-        if generalSettings.serverTabModsEnabled {
-            items.append(.init(
-                section: .mods,
-                title: "server.launch.mods".localized(),
-                icon: "puzzlepiece.extension",
-                isEnabled: supportsMods,
-                disabledHint: "server.launch.hint.mods_only".localized()
-            ))
-        }
-        if generalSettings.serverTabPluginsEnabled {
-            items.append(.init(
-                section: .plugins,
-                title: "server.launch.plugins".localized(),
-                icon: "powerplug",
-                isEnabled: supportsPlugins,
-                disabledHint: "server.launch.hint.plugins_only".localized()
-            ))
-        }
-        if generalSettings.serverTabSchedulesEnabled {
-            items.append(.init(
-                section: .schedules,
-                title: "server.schedules.title".localized(),
-                icon: "clock.arrow.circlepath",
-                isEnabled: true,
-                disabledHint: nil
-            ))
-        }
-        if generalSettings.serverTabLogsEnabled {
-            items.append(.init(
-                section: .logs,
-                title: "server.logs.title".localized(),
-                icon: "doc.text.magnifyingglass",
-                isEnabled: true,
-                disabledHint: nil,
-            ))
-        }
-        if items.isEmpty {
-            items.append(.init(
-                section: .console,
-                title: "server.console.title".localized(),
-                icon: "terminal",
-                isEnabled: true,
-                disabledHint: nil
-            ))
-        }
-        return items
-    }
-
-    private func sectionRow(
-        section: ServerDetailSection,
-        title: String,
-        icon: String,
-        isEnabled: Bool = true,
-        disabledHint: String? = nil
-    ) -> some View {
-        let rowButton = Button {
-            guard isEnabled else { return }
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.88)) {
-                detailState.serverPanelSection = section.rawValue
-            }
-        } label: {
-            HStack(spacing: 8) {
-                if currentSection == section {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.accentColor)
-                        .frame(width: 3, height: 16)
-                        .matchedGeometryEffect(id: "server-section-indicator", in: sectionIndicatorNamespace)
-                } else {
-                    Color.clear
-                        .frame(width: 3, height: 16)
-                }
-                Image(systemName: icon)
-                    .frame(width: 16)
-                Text(title)
-                    .lineLimit(1)
-                if !isEnabled, let disabledHint {
-                    Text(disabledHint)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .foregroundStyle(isEnabled ? (currentSection == section ? Color.primary : Color.secondary) : Color.secondary.opacity(0.6))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .opacity(isEnabled ? 1 : 0.65)
-        .disabled(!isEnabled)
-
-        return rowButton
+    private var sectionItems: [ServerDetailSectionItem] {
+        ServerDetailSectionProvider.items(for: server, settings: generalSettings)
     }
 
     private func normalizeSelectedSectionIfNeeded() {

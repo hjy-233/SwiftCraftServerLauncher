@@ -285,7 +285,7 @@ struct ModrinthProjectContentView: View {
     private var loadingView: some View {
         VStack(alignment: .leading, spacing: 12) {
             SkeletonView(
-                width: SkeletonWidth.make(base: 220, variance: 34, seed: 201),
+                width: SkeletonWidth.make(base: 220, variance: 145, seed: 201),
                 height: 20,
                 cornerRadius: 6
             )

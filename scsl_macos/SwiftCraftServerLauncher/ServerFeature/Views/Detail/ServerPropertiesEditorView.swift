@@ -309,8 +309,6 @@ struct ServerPropertiesEditorView: View {
             }
         }
         .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(Color(nsColor: .windowBackgroundColor))
         .onDrop(of: [UTType.fileURL, UTType.plainText], isTargeted: nil) { providers in
             handleDrop(providers, to: "")
         }
@@ -389,16 +387,12 @@ struct ServerPropertiesEditorView: View {
             if properties.isEmpty && isLoaded {
                 ServerDetailEmptyState(text: "server.properties.no_properties".localized())
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(filteredKeys, id: \.self) { key in
-                            propertyRow(key: key)
-                        }
+                Form {
+                    ForEach(filteredKeys, id: \.self) { key in
+                        propertyRow(key: key)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 2)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .formStyle(.grouped)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

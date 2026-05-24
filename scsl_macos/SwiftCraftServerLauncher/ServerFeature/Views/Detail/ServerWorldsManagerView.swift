@@ -11,6 +11,8 @@ struct ServerWorldsManagerView: View {
     @State private var showImporter = false
     @State private var pendingLocalRemoveURL: URL?
     @State private var pendingRemoteRemoveName: String?
+    @State private var selectedWorldId: String?
+    @StateObject private var toolbarSelection = ServerDetailToolbarSelectionState.shared
     private let autoRefreshTimer = Timer.publish(every: 6, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -20,37 +22,20 @@ struct ServerWorldsManagerView: View {
             if isRemoteServer ? remoteFolders.isEmpty : folders.isEmpty {
                 ServerDetailEmptyState(text: "common.empty".localized())
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        if isRemoteServer {
-                            ForEach(Array(remoteFolders.enumerated()), id: \.offset) { index, name in
-                                row(title: name) {
-                                    if generalSettings.confirmDeleteWorld {
-                                        pendingRemoteRemoveName = name
-                                    } else {
-                                        removeRemoteFolder(name)
-                                    }
-                                }
-                                if index < remoteFolders.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        } else {
-                            ForEach(Array(folders.enumerated()), id: \.offset) { index, url in
-                                row(title: url.lastPathComponent) {
-                                    if generalSettings.confirmDeleteWorld {
-                                        pendingLocalRemoveURL = url
-                                    } else {
-                                        removeFolder(url)
-                                    }
-                                }
-                                if index < folders.count - 1 {
-                                    Divider()
-                                }
-                            }
+                List(selection: $selectedWorldId) {
+                    if isRemoteServer {
+                        ForEach(remoteFolders, id: \.self) { name in
+                            row(title: name)
+                                .tag(name)
+                        }
+                    } else {
+                        ForEach(folders, id: \.self) { url in
+                            row(title: url.lastPathComponent)
+                                .tag(url.path)
                         }
                     }
                 }
+                .listStyle(.inset)
             }
         }
         .onAppear { loadFolders() }
@@ -73,9 +58,17 @@ struct ServerWorldsManagerView: View {
                 openFolder()
             case .worldsImport:
                 showImporter = true
+            case .worldsRemove:
+                confirmSelectedRemoval()
             default:
                 break
             }
+        }
+        .onChange(of: selectedWorldId) { _, newValue in
+            toolbarSelection.selectedWorldIdByServerId[server.id] = newValue
+        }
+        .onDisappear {
+            toolbarSelection.selectedWorldIdByServerId[server.id] = nil
         }
         .confirmationDialog(
             "server.worlds.remove.title".localized(),
@@ -112,16 +105,15 @@ struct ServerWorldsManagerView: View {
         }
     }
 
-    private func row(title: String, onRemove: @escaping () -> Void) -> some View {
-        HStack(spacing: 8) {
+    private func row(title: String) -> some View {
+        Label {
             Text(title)
-            Spacer()
-            Button("common.remove".localized(), action: onRemove)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: "globe.americas")
+                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
     }
 
     private var isRemoteServer: Bool {
@@ -137,7 +129,12 @@ struct ServerWorldsManagerView: View {
             Task {
                 guard let node = serverNodeRepository.getNode(by: server.nodeId) else { return }
                 if let list = try? await SSHNodeService.listRemoteWorlds(node: node, serverName: server.name) {
-                    await MainActor.run { remoteFolders = list }
+                    await MainActor.run {
+                        remoteFolders = list
+                        if let selectedWorldId, !list.contains(selectedWorldId) {
+                            self.selectedWorldId = nil
+                        }
+                    }
                 }
             }
             return
@@ -148,10 +145,34 @@ struct ServerWorldsManagerView: View {
             (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
         }
         .filter { $0.lastPathComponent.hasPrefix("world") }
+        if let selectedWorldId, !folders.contains(where: { $0.path == selectedWorldId }) {
+            self.selectedWorldId = nil
+        }
+    }
+
+    private func confirmSelectedRemoval() {
+        guard let selectedWorldId else { return }
+        if isRemoteServer {
+            if generalSettings.confirmDeleteWorld {
+                pendingRemoteRemoveName = selectedWorldId
+            } else {
+                removeRemoteFolder(selectedWorldId)
+            }
+            return
+        }
+        guard let url = folders.first(where: { $0.path == selectedWorldId }) else { return }
+        if generalSettings.confirmDeleteWorld {
+            pendingLocalRemoveURL = url
+        } else {
+            removeFolder(url)
+        }
     }
 
     private func removeFolder(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
+        if selectedWorldId == url.path {
+            selectedWorldId = nil
+        }
         loadFolders()
     }
 
@@ -195,7 +216,12 @@ struct ServerWorldsManagerView: View {
         Task {
             do {
                 try await SSHNodeService.removeRemoteWorld(node: node, serverName: server.name, worldName: name)
-                await MainActor.run { loadFolders() }
+                await MainActor.run {
+                    if selectedWorldId == name {
+                        selectedWorldId = nil
+                    }
+                    loadFolders()
+                }
             } catch {
                 await MainActor.run { GlobalErrorHandler.shared.handle(error) }
             }

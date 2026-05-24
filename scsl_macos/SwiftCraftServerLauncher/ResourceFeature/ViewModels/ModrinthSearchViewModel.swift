@@ -60,7 +60,7 @@ final class ModrinthSearchViewModel: ObservableObject {
 
     private struct SearchCacheContext {
         let query: String
-        let projectType: String
+        let projectTypes: [String]
         let versions: [String]
         let categories: [String]
         let features: [String]
@@ -98,7 +98,7 @@ final class ModrinthSearchViewModel: ObservableObject {
     // swiftlint:disable:next function_parameter_count
     func search(
         query: String,
-        projectType: String,
+        projectTypes: [String],
         versions: [String],
         categories: [String],
         features: [String],
@@ -114,7 +114,7 @@ final class ModrinthSearchViewModel: ObservableObject {
         let isFirstPage = !append && page == 1
         let cacheContext = SearchCacheContext(
             query: query,
-            projectType: projectType,
+            projectTypes: projectTypes,
             versions: versions,
             categories: categories,
             features: features,
@@ -162,7 +162,7 @@ final class ModrinthSearchViewModel: ObservableObject {
                     loaders: loaders
                 )
                 let facets = buildFacets(
-                    projectType: projectType,
+                    projectTypes: projectTypes,
                     versions: versions,
                     categories: categories,
                     features: features,
@@ -247,7 +247,7 @@ final class ModrinthSearchViewModel: ObservableObject {
     private func cacheKey(context: SearchCacheContext) -> String {
         let keyParts = [
             "q:\(context.query)",
-            "type:\(context.projectType)",
+            "types:\(context.projectTypes.sorted().joined(separator: ","))",
             "v:\(context.versions.sorted().joined(separator: ","))",
             "c:\(context.categories.sorted().joined(separator: ","))",
             "f:\(context.features.sorted().joined(separator: ","))",
@@ -286,7 +286,7 @@ final class ModrinthSearchViewModel: ObservableObject {
     }
     // MARK: - Private Methods
     private func buildFacets(
-        projectType: String,
+        projectTypes: [String],
         versions: [String],
         categories: [String],
         features: [String],
@@ -295,9 +295,11 @@ final class ModrinthSearchViewModel: ObservableObject {
         var facets: [[String]] = []
 
         // Project type is always required
-        facets.append([
-            "\(ModrinthConstants.API.FacetType.projectType):\(projectType)"
-        ])
+        facets.append(
+            projectTypes.map {
+                "\(ModrinthConstants.API.FacetType.projectType):\($0)"
+            }
+        )
 
         // Add versions if any
         if !versions.isEmpty {
@@ -339,8 +341,10 @@ final class ModrinthSearchViewModel: ObservableObject {
         }
 
         // Add loaders if any (as categories)
-        if !filterOptions.loaders.isEmpty && projectType != "resourcepack"
-            && projectType != "datapack" {
+        let supportsLoaderFilters = !projectTypes.allSatisfy {
+            $0 == "resourcepack" || $0 == "datapack"
+        }
+        if !filterOptions.loaders.isEmpty && supportsLoaderFilters {
             var loadersToUse = filterOptions.loaders
             if let first = filterOptions.loaders.first, first.lowercased() == "vanilla" {
                 loadersToUse = ["minecraft"]

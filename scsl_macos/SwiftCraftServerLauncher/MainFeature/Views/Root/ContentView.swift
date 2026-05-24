@@ -25,31 +25,36 @@ struct ContentView: View {
 
     @ViewBuilder
     private func resourceContentView(type: ResourceType) -> some View {
-        ZStack {
-            if let projectId = detailState.selectedProjectId {
-                ModrinthProjectContentView(
-                    projectDetail: detailState.loadedProjectDetailBinding,
-                    projectId: projectId
-                )
-                .transition(.resourcePanelForward)
-            } else {
-                CategoryContentView(
-                    project: type.rawValue,
-                    type: "resource",
-                    selectedCategories: filterState.selectedCategoriesBinding,
-                    selectedFeatures: filterState.selectedFeaturesBinding,
-                    selectedResolutions: filterState.selectedResolutionsBinding,
-                    selectedPerformanceImpacts: filterState.selectedPerformanceImpactBinding,
-                    selectedVersions: filterState.selectedVersionsBinding,
-                    selectedLoaders: filterState.selectedLoadersBinding,
-                    dataSource: filterState.dataSource
-                )
-                .id(type)
-                .transition(.resourcePanelBackward)
-            }
+        if detailState.selectedProjectId != nil {
+            EmptyView()
+        } else {
+            CategoryContentView(
+                project: filterProject(for: type),
+                type: "resource",
+                selectedCategories: filterState.selectedCategoriesBinding,
+                selectedFeatures: filterState.selectedFeaturesBinding,
+                selectedResolutions: filterState.selectedResolutionsBinding,
+                selectedPerformanceImpacts: filterState.selectedPerformanceImpactBinding,
+                selectedVersions: filterState.selectedVersionsBinding,
+                selectedLoaders: filterState.selectedLoadersBinding,
+                browseScope: filterState.resourceBrowseScopeBinding,
+                showsBrowseScopePicker: type == .browse || type == .bookmarks,
+                dataSource: filterState.dataSource
+            )
+            .id("\(type.rawValue)-\(filterState.resourceBrowseScope.rawValue)")
+            .transition(.resourcePanelBackward)
         }
-        .clipped()
-        .animation(.easeInOut(duration: 0.28), value: detailState.selectedProjectId)
+    }
+
+    private func filterProject(for type: ResourceType) -> String {
+        switch type {
+        case .browse:
+            return filterState.resourceBrowseScope.primaryProjectType
+        case .bookmarks:
+            return filterState.resourceBrowseScope.primaryProjectType
+        default:
+            return type.rawValue
+        }
     }
 
     @ViewBuilder

@@ -5,6 +5,8 @@ struct ServerSchedulesView: View {
     @StateObject private var store: ServerScheduleStore
     @State private var editingSchedule: ServerSchedule?
     @State private var isCreatingNew = false
+    @State private var selectedScheduleIds: Set<ServerSchedule.ID> = []
+    @StateObject private var toolbarSelection = ServerDetailToolbarSelectionState.shared
 
     init(server: ServerInstance) {
         self.server = server
@@ -18,14 +20,30 @@ struct ServerSchedulesView: View {
                 if store.schedules.isEmpty {
                     ServerDetailEmptyState(text: "server.schedules.empty".localized())
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 8) {
-                            ForEach(store.schedules) { schedule in
-                                scheduleRow(schedule)
-                            }
+                    Table(store.schedules, selection: $selectedScheduleIds) {
+                        TableColumn("server.schedules.name".localized()) { schedule in
+                            Text(schedule.name)
+                                .lineLimit(1)
                         }
-                        .padding(.vertical, 4)
+                        TableColumn("server.schedules.action".localized()) { schedule in
+                            Text(schedule.action.i18nKey.localized())
+                                .lineLimit(1)
+                        }
+                        TableColumn("server.schedules.trigger.type".localized()) { schedule in
+                            Text(schedule.trigger.i18nKey.localized())
+                                .lineLimit(1)
+                        }
+                        TableColumn("server.schedules.next_run".localized()) { schedule in
+                            Text(store.nextRunText(for: schedule) ?? "-")
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        TableColumn("server.schedules.enabled".localized()) { schedule in
+                            Image(systemName: schedule.isEnabled ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(schedule.isEnabled ? .green : .secondary)
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -34,9 +52,26 @@ struct ServerSchedulesView: View {
             store.reload(server: server)
         }
         .onReceive(NotificationCenter.default.publisher(for: .serverDetailToolbarAction)) { notification in
-            guard let action = ServerDetailToolbarActionBus.action(from: notification),
-                  action == .schedulesNew else { return }
-            startCreate()
+            guard let action = ServerDetailToolbarActionBus.action(from: notification) else { return }
+            switch action {
+            case .schedulesNew:
+                startCreate()
+            case .schedulesRunNow:
+                runSelectedNow()
+            case .schedulesToggleEnabled:
+                toggleSelectedEnabled()
+            default:
+                break
+            }
+        }
+        .onChange(of: selectedScheduleIds) { _, _ in
+            updateToolbarSelection()
+        }
+        .onChange(of: store.schedules) { _, _ in
+            updateToolbarSelection()
+        }
+        .onDisappear {
+            toolbarSelection.updateScheduleSelection(serverId: server.id, id: nil)
         }
         .sheet(item: $editingSchedule) { schedule in
             ServerScheduleEditor(
@@ -79,110 +114,31 @@ struct ServerSchedulesView: View {
         editingSchedule = draft
     }
 
-    private func scheduleRow(_ schedule: ServerSchedule) -> some View {
-        _ = store.lastRunToken
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(schedule.name)
-                    .font(.headline)
-                Text(scheduleSummary(schedule))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if let nextRun = store.nextRunText(for: schedule) {
-                    Text("\("server.schedules.next_run".localized()) \(nextRun)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let lastRun = store.lastRunText(for: schedule) {
-                    Text("\("server.schedules.last_run".localized()) \(lastRun)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 8) {
-                Button("server.schedules.run_now".localized()) {
-                    Task { @MainActor in
-                        await store.runNow(schedule)
-                    }
-                }
-                .buttonStyle(.bordered)
-                Toggle("", isOn: bindingForSchedule(schedule))
-                    .labelsHidden()
-            }
-        }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.windowBackgroundColor).opacity(0.3))
-        )
-        .contentShape(Rectangle())
-        .contextMenu {
-            Button("server.schedules.edit".localized()) {
-                isCreatingNew = false
-                editingSchedule = schedule
-            }
-            Button("server.schedules.delete".localized(), role: .destructive) {
-                store.delete(schedule)
-            }
-        }
-        .onTapGesture {
-            isCreatingNew = false
-            editingSchedule = schedule
+    private var selectedSchedule: ServerSchedule? {
+        guard let id = selectedScheduleIds.first else { return nil }
+        return store.schedules.first { $0.id == id }
+    }
+
+    private func runSelectedNow() {
+        guard let schedule = selectedSchedule else { return }
+        Task { @MainActor in
+            await store.runNow(schedule)
         }
     }
 
-    private func scheduleSummary(_ schedule: ServerSchedule) -> String {
-        let timeText = String(format: "%02d:%02d", schedule.time.hour, schedule.time.minute)
-        let actionText = schedule.action.i18nKey.localized()
-        let daysText = scheduleDaysText(schedule.weekdays)
-        if schedule.trigger == .consoleKeyword {
-            let keyword = schedule.keyword.trimmingCharacters(in: .whitespacesAndNewlines)
-            if keyword.isEmpty {
-                return "\(actionText) · \("server.schedules.trigger.console".localized())"
-            }
-            if schedule.keywordIsRegex {
-                return "\(actionText) · /\(keyword)/"
-            }
-            return "\(actionText) · \(keyword)"
-        }
-        if schedule.action == .command {
-            return "\(actionText) · \(timeText) · \(daysText)"
-        }
-        return "\(actionText) · \(timeText) · \(daysText)"
+    private func toggleSelectedEnabled() {
+        guard var schedule = selectedSchedule else { return }
+        schedule.isEnabled.toggle()
+        store.upsert(schedule)
+        updateToolbarSelection()
     }
 
-    private func scheduleDaysText(_ weekdays: [Int]) -> String {
-        if weekdays.isEmpty {
-            return "server.schedules.days.everyday".localized()
-        }
-        let ordered = weekdays.sorted()
-        let labels = ordered.map { weekdayLabel($0) }
-        return labels.joined(separator: " ")
-    }
-
-    private func weekdayLabel(_ weekday: Int) -> String {
-        switch weekday {
-        case 1: return "server.schedules.weekday.sun".localized()
-        case 2: return "server.schedules.weekday.mon".localized()
-        case 3: return "server.schedules.weekday.tue".localized()
-        case 4: return "server.schedules.weekday.wed".localized()
-        case 5: return "server.schedules.weekday.thu".localized()
-        case 6: return "server.schedules.weekday.fri".localized()
-        case 7: return "server.schedules.weekday.sat".localized()
-        default: return ""
-        }
-    }
-
-    private func bindingForSchedule(_ schedule: ServerSchedule) -> Binding<Bool> {
-        Binding(
-            get: { schedule.isEnabled },
-            set: { newValue in
-                var updated = schedule
-                updated.isEnabled = newValue
-                store.upsert(updated)
-            }
+    private func updateToolbarSelection() {
+        let schedule = selectedSchedule
+        toolbarSelection.updateScheduleSelection(
+            serverId: server.id,
+            id: schedule?.id,
+            isEnabled: schedule?.isEnabled ?? false
         )
     }
 }
@@ -212,10 +168,12 @@ final class ServerScheduleStore: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            guard let self,
-                  let serverId = notification.object as? String,
-                  serverId == self.server.id else { return }
-            self.schedules = ServerScheduleService.shared.schedules(for: self.server)
+            Task { @MainActor in
+                guard let self,
+                      let serverId = notification.object as? String,
+                      serverId == self.server.id else { return }
+                self.schedules = ServerScheduleService.shared.schedules(for: self.server)
+            }
         }
     }
 
@@ -438,36 +396,33 @@ struct WeekdaySelector: View {
     @Binding var selected: [Int]
 
     var body: some View {
-        HStack(spacing: 6) {
-            weekdayButton(2, "server.schedules.weekday.mon".localized())
-            weekdayButton(3, "server.schedules.weekday.tue".localized())
-            weekdayButton(4, "server.schedules.weekday.wed".localized())
-            weekdayButton(5, "server.schedules.weekday.thu".localized())
-            weekdayButton(6, "server.schedules.weekday.fri".localized())
-            weekdayButton(7, "server.schedules.weekday.sat".localized())
-            weekdayButton(1, "server.schedules.weekday.sun".localized())
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+            GridRow {
+                weekdayToggle(2, "server.schedules.weekday.mon".localized())
+                weekdayToggle(3, "server.schedules.weekday.tue".localized())
+                weekdayToggle(4, "server.schedules.weekday.wed".localized())
+                weekdayToggle(5, "server.schedules.weekday.thu".localized())
+            }
+            GridRow {
+                weekdayToggle(6, "server.schedules.weekday.fri".localized())
+                weekdayToggle(7, "server.schedules.weekday.sat".localized())
+                weekdayToggle(1, "server.schedules.weekday.sun".localized())
+            }
         }
     }
 
-    private func weekdayButton(_ value: Int, _ label: String) -> some View {
-        let isSelected = selected.contains(value)
-        return Button {
-            if isSelected {
-                selected.removeAll { $0 == value }
-            } else {
-                selected.append(value)
+    private func weekdayToggle(_ value: Int, _ label: String) -> some View {
+        Toggle(label, isOn: Binding(
+            get: { selected.contains(value) },
+            set: { isSelected in
+                if isSelected, !selected.contains(value) {
+                    selected.append(value)
+                } else if !isSelected {
+                    selected.removeAll { $0 == value }
+                }
             }
-        } label: {
-            Text(label)
-                .font(.subheadline)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isSelected ? Color.accentColor.opacity(0.2) : Color.gray.opacity(0.2))
-                )
-        }
-        .buttonStyle(.plain)
+        ))
+        .toggleStyle(.checkbox)
     }
 }
 

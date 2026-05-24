@@ -1,5 +1,50 @@
 import SwiftUI
 
+enum ResourceBrowseScope: String, CaseIterable, Identifiable {
+    case all = "all"
+    case mod = "mod"
+    case plugin = "plugin"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all:
+            return "command.palette.root".localized()
+        case .mod:
+            return ResourceType.mod.localizedName
+        case .plugin:
+            return ResourceType.plugin.localizedName
+        }
+    }
+
+    var projectTypes: [String] {
+        switch self {
+        case .all:
+            return [ResourceType.mod.rawValue, ResourceType.plugin.rawValue]
+        case .mod:
+            return [ResourceType.mod.rawValue]
+        case .plugin:
+            return [ResourceType.plugin.rawValue]
+        }
+    }
+
+    var primaryProjectType: String {
+        projectTypes.first ?? ResourceType.mod.rawValue
+    }
+
+    init(resourceType: ResourceType) {
+        switch resourceType {
+        case .plugin:
+            self = .plugin
+        case .browse, .bookmarks:
+            self = .all
+        default:
+            self = .mod
+        }
+    }
+}
+
 /// 资源筛选与列表相关状态（可观测）
 final class ResourceFilterState: ObservableObject {
 
@@ -22,6 +67,13 @@ final class ResourceFilterState: ObservableObject {
     @Published var dataSource: DataSource
     @Published var searchText: String = ""
     @Published var localResourceFilter: LocalResourceFilter = .all
+    @Published var resourceBrowseScope: ResourceBrowseScope = .all {
+        didSet {
+            guard oldValue != resourceBrowseScope else { return }
+            clearProjectSpecificFilters()
+            applyDefaultsForBrowseScope()
+        }
+    }
 
     init(dataSource: DataSource? = nil) {
         self.dataSource = .modrinth
@@ -47,6 +99,20 @@ final class ResourceFilterState: ObservableObject {
     /// 仅清空搜索文本
     func clearSearchText() {
         searchText = ""
+    }
+
+    func clearProjectSpecificFilters() {
+        selectedCategories.removeAll()
+        selectedFeatures.removeAll()
+        selectedResolutions.removeAll()
+        selectedPerformanceImpact.removeAll()
+        selectedLoaders.removeAll()
+    }
+
+    func applyDefaultsForBrowseScope() {
+        if resourceBrowseScope == .mod {
+            selectedFeatures = [AppConstants.EnvironmentTypes.server]
+        }
     }
 
     // MARK: - Bindings（供子视图需要 Binding 时使用）
@@ -92,5 +158,8 @@ final class ResourceFilterState: ObservableObject {
     }
     var localResourceFilterBinding: Binding<LocalResourceFilter> {
         Binding(get: { [weak self] in self?.localResourceFilter ?? .all }, set: { [weak self] in self?.localResourceFilter = $0 })
+    }
+    var resourceBrowseScopeBinding: Binding<ResourceBrowseScope> {
+        Binding(get: { [weak self] in self?.resourceBrowseScope ?? .all }, set: { [weak self] in self?.resourceBrowseScope = $0 })
     }
 }

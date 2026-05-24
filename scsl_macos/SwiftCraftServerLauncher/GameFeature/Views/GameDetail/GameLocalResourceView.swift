@@ -20,9 +20,19 @@ struct GameLocalResourceView: View {
     @State private var allFiles: [URL] = [] // 所有文件列表
     @State private var searchTimer: Timer? // 搜索防抖定时器
     @Binding var localFilter: LocalResourceFilter
+    @EnvironmentObject private var generalSettings: GeneralSettingsManager
 
     private static let pageSize: Int = 20
     private var pageSize: Int { Self.pageSize }
+    private var gridColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(), spacing: gridSpacing, alignment: .top),
+            count: 2
+        )
+    }
+    private var gridSpacing: CGFloat {
+        generalSettings.resourceCardStyle == .compact ? 14 : 18
+    }
 
     // 当前显示的资源列表（无限滚动）
     private var displayedResources: [ModrinthProjectDetail] {
@@ -41,18 +51,19 @@ struct GameLocalResourceView: View {
     }
 
     var body: some View {
-        List {
-            if let header {
-                header
-                    .listRowSeparator(.hidden)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if let header {
+                    header
+                }
+                listContent
+                if isLoadingMore {
+                    loadingMoreIndicator
+                }
             }
-            listContent
-            if isLoadingMore {
-                loadingMoreIndicator
-                    .listRowSeparator(.hidden)
-            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
         }
-        .listStyle(.plain)
         .searchable(
             text: $searchText,
             placement: .toolbar,
@@ -124,64 +135,55 @@ struct GameLocalResourceView: View {
                 Text(error.chineseMessage)
             }
             .frame(maxWidth: .infinity, alignment: .center)
-            .listRowSeparator(.hidden)
         } else if isLoadingResources && scannedResources.isEmpty {
             HStack {
                 ProgressView()
                     .controlSize(.small)
             }
             .frame(maxWidth: .infinity, alignment: .center)
-            .listRowSeparator(.hidden)
         } else if hasLoaded && displayedResources.isEmpty {
             EmptyView()
         } else {
-            ForEach(
-                displayedResources.map { ModrinthProject.from(detail: $0) },
-                id: \.projectId
-            ) { mod in
-                ModrinthDetailCardView(
-                    project: mod,
-                    selectedVersions: [game.gameVersion],
-                    selectedLoaders: [game.modLoader],
-                    gameInfo: game,
-                    query: query,
-                    type: false,
-                    selectedItem: $selectedItem,
-                    onResourceChanged: refreshResources,
-                    onLocalDisableStateChanged: handleLocalDisableStateChanged,
-                    onResourceUpdated: handleResourceUpdated,
-                    scannedDetailIds: .constant([])
-                )
-                .padding(.vertical, ModrinthConstants.UIConstants.verticalPadding)
-                .listRowInsets(
-                    EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
-                )
-                .listRowSeparator(.hidden)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    // 本地资源不跳转详情页面（沿用原逻辑）
-                    // 使用 id 前缀判断本地资源，更可靠
-                    if !mod.projectId.hasPrefix("local_") && !mod.projectId.hasPrefix("file_") {
-                        selectedProjectId = mod.projectId
-                        if let type = ResourceType(rawValue: query) {
-                            selectedItem = .resource(type)
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: gridSpacing) {
+                ForEach(
+                    displayedResources.map { ModrinthProject.from(detail: $0) },
+                    id: \.projectId
+                ) { mod in
+                    ModrinthDetailCardView(
+                        project: mod,
+                        selectedVersions: [game.gameVersion],
+                        selectedLoaders: [game.modLoader],
+                        gameInfo: game,
+                        query: query,
+                        type: false,
+                        selectedItem: $selectedItem,
+                        onResourceChanged: refreshResources,
+                        onLocalDisableStateChanged: handleLocalDisableStateChanged,
+                        onResourceUpdated: handleResourceUpdated,
+                        scannedDetailIds: .constant([])
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !mod.projectId.hasPrefix("local_") && !mod.projectId.hasPrefix("file_") {
+                            selectedProjectId = mod.projectId
+                            if let type = ResourceType(rawValue: query) {
+                                selectedItem = .resource(type)
+                            }
                         }
                     }
-                }
-                .onAppear {
-                    loadNextPageIfNeeded(currentItem: mod)
+                    .onAppear {
+                        loadNextPageIfNeeded(currentItem: mod)
+                    }
                 }
             }
         }
     }
 
     private var loadingMoreIndicator: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.small)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(16)
+        ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
     }
 
     // MARK: - 分页加载

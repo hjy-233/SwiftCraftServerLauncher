@@ -61,7 +61,7 @@ class GameActionManager: ObservableObject {
                         }) {
                             selectedItem.wrappedValue = .game(firstGame.id)
                         } else {
-                            selectedItem.wrappedValue = .resource(.mod)
+                            selectedItem.wrappedValue = .resource(.browse)
                             // 切换到资源页面时，将 gameType 设置为 true
                             gameType?.wrappedValue = true
                         }

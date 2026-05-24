@@ -9,6 +9,7 @@ public struct DetailToolbarView: ToolbarContent {
     @ObservedObject var serverLaunchUseCase: ServerLaunchUseCase
     @StateObject private var serverActionManager = ServerActionManager.shared
     @StateObject private var serverStatusManager = ServerStatusManager.shared
+    @StateObject private var toolbarSelection = ServerDetailToolbarSelectionState.shared
 
     init(
         filterState: ResourceFilterState,
@@ -124,7 +125,42 @@ public struct DetailToolbarView: ToolbarContent {
 
                     switch detailState.serverPanelSection {
                     case "serverConfig":
-                        EmptyView()
+                        Button {
+                            post(.configNewFile)
+                        } label: {
+                            Label("server.files.new_file".localized(), systemImage: "doc.badge.plus")
+                        }
+                        .help("server.files.new_file".localized())
+                        Button {
+                            post(.configNewFolder)
+                        } label: {
+                            Label("server.files.new_folder".localized(), systemImage: "folder.badge.plus")
+                        }
+                        .help("server.files.new_folder".localized())
+                        Button {
+                            post(.configUpload)
+                        } label: {
+                            Label("server.files.upload".localized(), systemImage: "tray.and.arrow.up")
+                        }
+                        .help("server.files.upload".localized())
+                        Button {
+                            post(.configRename)
+                        } label: {
+                            Label("server.files.rename".localized(), systemImage: "pencil")
+                        }
+                        .help("server.files.rename".localized())
+                        Button {
+                            post(.configDelete)
+                        } label: {
+                            Label("server.files.delete".localized(), systemImage: "trash")
+                        }
+                        .help("server.files.delete".localized())
+                        Button {
+                            post(.configToggleSidebar)
+                        } label: {
+                            Label("server.files.shortcut.sidebar".localized(), systemImage: "sidebar.left")
+                        }
+                        .help("server.files.shortcut.sidebar".localized())
                     case "worlds":
                         Button {
                             post(.worldsOpenFolder)
@@ -138,6 +174,13 @@ public struct DetailToolbarView: ToolbarContent {
                             Label("server.worlds.import".localized(), systemImage: "tray.and.arrow.down")
                         }
                         .help("server.worlds.import".localized())
+                        Button {
+                            post(.worldsRemove)
+                        } label: {
+                            Label("common.remove".localized(), systemImage: "trash")
+                        }
+                        .help("common.remove".localized())
+                        .disabled(toolbarSelection.selectedWorldId(for: server.id) == nil)
                     case "mods":
                         Button {
                             post(.modsImport)
@@ -145,6 +188,13 @@ public struct DetailToolbarView: ToolbarContent {
                             Label("server.mods.import".localized(), systemImage: "tray.and.arrow.down")
                         }
                         .help("server.mods.import".localized())
+                        Button {
+                            post(.modsRemove)
+                        } label: {
+                            Label("common.remove".localized(), systemImage: "trash")
+                        }
+                        .help("common.remove".localized())
+                        .disabled(toolbarSelection.selectedModId(for: server.id) == nil)
                     case "plugins":
                         Button {
                             post(.pluginsImport)
@@ -152,6 +202,28 @@ public struct DetailToolbarView: ToolbarContent {
                             Label("server.plugins.import".localized(), systemImage: "tray.and.arrow.down")
                         }
                         .help("server.plugins.import".localized())
+                        Button {
+                            post(.pluginsRemove)
+                        } label: {
+                            Label("common.remove".localized(), systemImage: "trash")
+                        }
+                        .help("common.remove".localized())
+                        .disabled(toolbarSelection.selectedPluginId(for: server.id) == nil)
+                    case "players":
+                        Button {
+                            post(.playersAdd)
+                        } label: {
+                            Label("common.add".localized(), systemImage: "person.badge.plus")
+                        }
+                        .help("common.add".localized())
+                        .disabled(toolbarSelection.selectedPlayerGroup(for: server.id) == nil)
+                        Button {
+                            post(.playersRemove)
+                        } label: {
+                            Label("common.remove".localized(), systemImage: "trash")
+                        }
+                        .help("common.remove".localized())
+                        .disabled(toolbarSelection.selectedPlayerId(for: server.id) == nil)
                     case "console":
                         Button {
                             post(.consoleClear)
@@ -166,6 +238,25 @@ public struct DetailToolbarView: ToolbarContent {
                             Label("server.schedules.add".localized(), systemImage: "note.text.badge.plus")
                         }
                         .help("server.schedules.add".localized())
+                        Button {
+                            post(.schedulesRunNow)
+                        } label: {
+                            Label("server.schedules.run_now".localized(), systemImage: "play")
+                        }
+                        .help("server.schedules.run_now".localized())
+                        .disabled(toolbarSelection.selectedScheduleId(for: server.id) == nil)
+                        Button {
+                            post(.schedulesToggleEnabled)
+                        } label: {
+                            Label(
+                                "server.schedules.enabled".localized(),
+                                systemImage: toolbarSelection.isSelectedScheduleEnabled(for: server.id)
+                                    ? "checkmark.circle"
+                                    : "circle"
+                            )
+                        }
+                        .help("server.schedules.enabled".localized())
+                        .disabled(toolbarSelection.selectedScheduleId(for: server.id) == nil)
                     default:
                         EmptyView()
                     }

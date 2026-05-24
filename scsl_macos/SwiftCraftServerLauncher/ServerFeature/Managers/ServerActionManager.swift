@@ -36,17 +36,9 @@ class ServerActionManager: ObservableObject {
                         if let firstServer = serverRepository.servers.first(where: { $0.id != server.id }) {
                             selectedItem.wrappedValue = .server(firstServer.id)
                         } else {
-                            selectedItem.wrappedValue = .resource(.mod)
+                            selectedItem.wrappedValue = .resource(.browse)
                         }
                     }
-                }
-
-                let dir: URL
-                if server.nodeId == ServerNode.local.id {
-                    dir = AppPaths.serverDirectory(serverName: server.directoryName)
-                } else {
-                    dir = AppPaths.remoteNodeServersDirectory(nodeId: server.nodeId)
-                        .appendingPathComponent(server.name, isDirectory: true)
                 }
 
                 if server.nodeId == ServerNode.local.id {

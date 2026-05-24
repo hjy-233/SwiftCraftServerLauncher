@@ -10,6 +10,8 @@ struct ServerPluginsManagerView: View {
     @State private var showImporter = false
     @State private var pendingLocalRemoveURL: URL?
     @State private var pendingRemoteRemoveFileName: String?
+    @State private var selectedFileId: String?
+    @StateObject private var toolbarSelection = ServerDetailToolbarSelectionState.shared
     private let autoRefreshTimer = Timer.publish(every: 6, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -19,37 +21,20 @@ struct ServerPluginsManagerView: View {
             if isRemoteServer ? remoteFiles.isEmpty : files.isEmpty {
                 ServerDetailEmptyState(text: "common.empty".localized())
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        if isRemoteServer {
-                            ForEach(Array(remoteFiles.enumerated()), id: \.offset) { index, fileName in
-                                row(title: fileName) {
-                                    if generalSettings.confirmUninstallPluginMod {
-                                        pendingRemoteRemoveFileName = fileName
-                                    } else {
-                                        removeRemoteFile(fileName)
-                                    }
-                                }
-                                if index < remoteFiles.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        } else {
-                            ForEach(Array(files.enumerated()), id: \.offset) { index, url in
-                                row(title: url.lastPathComponent) {
-                                    if generalSettings.confirmUninstallPluginMod {
-                                        pendingLocalRemoveURL = url
-                                    } else {
-                                        removeFile(url)
-                                    }
-                                }
-                                if index < files.count - 1 {
-                                    Divider()
-                                }
-                            }
+                List(selection: $selectedFileId) {
+                    if isRemoteServer {
+                        ForEach(remoteFiles, id: \.self) { fileName in
+                            row(title: fileName)
+                                .tag(fileName)
+                        }
+                    } else {
+                        ForEach(files, id: \.self) { url in
+                            row(title: url.lastPathComponent)
+                                .tag(url.path)
                         }
                     }
                 }
+                .listStyle(.inset)
             }
         }
         .onAppear { loadFiles() }
@@ -69,7 +54,15 @@ struct ServerPluginsManagerView: View {
             guard let action = ServerDetailToolbarActionBus.action(from: note) else { return }
             if action == .pluginsImport {
                 showImporter = true
+            } else if action == .pluginsRemove {
+                confirmSelectedRemoval()
             }
+        }
+        .onChange(of: selectedFileId) { _, newValue in
+            toolbarSelection.selectedPluginIdByServerId[server.id] = newValue
+        }
+        .onDisappear {
+            toolbarSelection.selectedPluginIdByServerId[server.id] = nil
         }
         .confirmationDialog(
             "server.plugins.remove.title".localized(),
@@ -106,16 +99,15 @@ struct ServerPluginsManagerView: View {
         }
     }
 
-    private func row(title: String, onRemove: @escaping () -> Void) -> some View {
-        HStack(spacing: 8) {
+    private func row(title: String) -> some View {
+        Label {
             Text(title)
-            Spacer()
-            Button("common.remove".localized(), action: onRemove)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: "powerplug")
+                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
     }
 
     private var isRemoteServer: Bool {
@@ -132,7 +124,12 @@ struct ServerPluginsManagerView: View {
             Task {
                 do {
                     let list = try await SSHNodeService.listRemotePlugins(node: node, serverName: server.name)
-                    await MainActor.run { remoteFiles = list }
+                    await MainActor.run {
+                        remoteFiles = list
+                        if let selectedFileId, !list.contains(selectedFileId) {
+                            self.selectedFileId = nil
+                        }
+                    }
                 } catch {
                     await MainActor.run { GlobalErrorHandler.shared.handle(error) }
                 }
@@ -142,6 +139,27 @@ struct ServerPluginsManagerView: View {
         let dir = pluginsDir()
         let all = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         files = all.filter { $0.pathExtension.lowercased() == "jar" }
+        if let selectedFileId, !files.contains(where: { $0.path == selectedFileId }) {
+            self.selectedFileId = nil
+        }
+    }
+
+    private func confirmSelectedRemoval() {
+        guard let selectedFileId else { return }
+        if isRemoteServer {
+            if generalSettings.confirmUninstallPluginMod {
+                pendingRemoteRemoveFileName = selectedFileId
+            } else {
+                removeRemoteFile(selectedFileId)
+            }
+            return
+        }
+        guard let url = files.first(where: { $0.path == selectedFileId }) else { return }
+        if generalSettings.confirmUninstallPluginMod {
+            pendingLocalRemoveURL = url
+        } else {
+            removeFile(url)
+        }
     }
 
     private func addFiles(_ urls: [URL]) {
@@ -176,6 +194,9 @@ struct ServerPluginsManagerView: View {
 
     private func removeFile(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
+        if selectedFileId == url.path {
+            selectedFileId = nil
+        }
         loadFiles()
     }
 
@@ -184,7 +205,12 @@ struct ServerPluginsManagerView: View {
         Task {
             do {
                 try await SSHNodeService.removeRemotePlugin(node: node, serverName: server.name, fileName: fileName)
-                await MainActor.run { loadFiles() }
+                await MainActor.run {
+                    if selectedFileId == fileName {
+                        selectedFileId = nil
+                    }
+                    loadFiles()
+                }
             } catch {
                 await MainActor.run { GlobalErrorHandler.shared.handle(error) }
             }

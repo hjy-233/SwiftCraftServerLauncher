@@ -53,7 +53,8 @@ struct GameRemoteResourceView: View {
 
     var body: some View {
         ModrinthDetailView(
-            query: query,
+            resourceType: ResourceType(rawValue: query) ?? .mod,
+            projectTypes: [query],
             selectedVersions: $selectedVersions,
             selectedCategories: $selectedCategories,
             selectedFeatures: $selectedFeatures,

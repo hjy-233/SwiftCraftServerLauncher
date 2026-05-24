@@ -1,21 +1,22 @@
+import AppKit
 import SwiftUI
 
-// MARK: - Main View
 struct ModrinthDetailView: View {
-    // MARK: - Properties
-    let query: String
+    let resourceType: ResourceType
+    let projectTypes: [String]
     @Binding var selectedVersions: [String]
     @Binding var selectedCategories: [String]
     @Binding var selectedFeatures: [String]
     @Binding var selectedResolutions: [String]
     @Binding var selectedPerformanceImpact: [String]
     @Binding var selectedProjectId: String?
+    @Binding var selectedProjectSummary: ModrinthProject?
     @Binding var selectedLoader: [String]
     let gameInfo: GameVersionInfo?
     @Binding var selectedItem: SidebarItem
     @Binding var gameType: Bool
     let header: AnyView?
-    @Binding var scannedDetailIds: Set<String> // 已扫描资源的 detailId Set，用于快速查找
+    @Binding var scannedDetailIds: Set<String>
     @Binding var dataSource: DataSource
 
     @StateObject private var viewModel = ModrinthSearchViewModel()
@@ -26,15 +27,18 @@ struct ModrinthDetailView: View {
     @State private var lastSearchParams: String = ""
     @State private var error: GlobalError?
     @EnvironmentObject private var generalSettings: GeneralSettingsManager
+    @EnvironmentObject private var detailState: ResourceDetailState
 
     init(
-        query: String,
+        resourceType: ResourceType,
+        projectTypes: [String],
         selectedVersions: Binding<[String]>,
         selectedCategories: Binding<[String]>,
         selectedFeatures: Binding<[String]>,
         selectedResolutions: Binding<[String]>,
         selectedPerformanceImpact: Binding<[String]>,
         selectedProjectId: Binding<String?>,
+        selectedProjectSummary: Binding<ModrinthProject?> = .constant(nil),
         selectedLoader: Binding<[String]>,
         gameInfo: GameVersionInfo?,
         selectedItem: Binding<SidebarItem>,
@@ -44,13 +48,15 @@ struct ModrinthDetailView: View {
         dataSource: Binding<DataSource> = .constant(.modrinth),
         searchText: Binding<String> = .constant("")
     ) {
-        self.query = query
+        self.resourceType = resourceType
+        self.projectTypes = projectTypes
         _selectedVersions = selectedVersions
         _selectedCategories = selectedCategories
         _selectedFeatures = selectedFeatures
         _selectedResolutions = selectedResolutions
         _selectedPerformanceImpact = selectedPerformanceImpact
         _selectedProjectId = selectedProjectId
+        _selectedProjectSummary = selectedProjectSummary
         _selectedLoader = selectedLoader
         self.gameInfo = gameInfo
         _selectedItem = selectedItem
@@ -61,44 +67,42 @@ struct ModrinthDetailView: View {
         _searchText = searchText
     }
 
-    private var searchKey: String {
-        [
-            query,
-            selectedVersions.joined(separator: ","),
-            selectedCategories.joined(separator: ","),
-            selectedFeatures.joined(separator: ","),
-            selectedResolutions.joined(separator: ","),
-            selectedPerformanceImpact.joined(separator: ","),
-            selectedLoader.joined(separator: ","),
-            String(gameType),
-            dataSource.rawValue,
-        ].joined(separator: "|")
-    }
-
     private var hasMoreResults: Bool {
         viewModel.results.count < viewModel.totalHits
     }
 
-    // MARK: - Body
+    private var gridColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(), spacing: gridSpacing, alignment: .top),
+            count: 2
+        )
+    }
+
+    private var gridSpacing: CGFloat {
+        generalSettings.resourceCardStyle == .compact ? 14 : 18
+    }
+
     var body: some View {
-        List {
-            if let header {
-                header
-                    .listRowSeparator(.hidden)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if let header {
+                    header
+                }
+
+                contentSection
+
+                if viewModel.isLoadingMore {
+                    loadingMoreIndicator
+                }
             }
-            listContent
-            if viewModel.isLoadingMore {
-                loadingMoreIndicator
-                    .listRowSeparator(.hidden)
-            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
         }
-        .listStyle(.plain)
         .task {
             if gameType {
                 await initialLoadIfNeeded()
             }
         }
-        // 当筛选条件变化时，重新搜索
         .onChange(of: selectedVersions) { _, _ in
             resetPagination()
             triggerSearch()
@@ -125,23 +129,19 @@ struct ModrinthDetailView: View {
         }
         .onChange(of: selectedProjectId) { oldValue, newValue in
             if oldValue != nil && newValue == nil {
-                // 关闭详情后保留当前列表，后台刷新数据
                 resetPagination()
                 triggerSearch()
             }
         }
         .onChange(of: dataSource) { _, _ in
-            // 清理之前的旧数据
             viewModel.clearResults()
             resetPagination()
-//            searchText = ""
             lastSearchParams = ""
             error = nil
             hasLoaded = false
             triggerSearch()
         }
-        .onChange(of: query) { _, _ in
-            // 清理之前的旧数据
+        .onChange(of: projectTypesKey) { _, _ in
             viewModel.clearResults()
             triggerSearch()
             searchText = ""
@@ -152,7 +152,6 @@ struct ModrinthDetailView: View {
             prompt: "search.resources".localized()
         )
         .onChange(of: searchText) { oldValue, newValue in
-            // 优化：仅在搜索文本实际变化时触发防抖搜索
             if oldValue != newValue {
                 resetPagination()
                 debounceSearch()
@@ -176,7 +175,44 @@ struct ModrinthDetailView: View {
         }
     }
 
-    // MARK: - Private Methods
+    @ViewBuilder private var contentSection: some View {
+        if let error = error {
+            newErrorView(error)
+                .frame(maxWidth: .infinity, alignment: .center)
+        } else if viewModel.isLoading {
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: gridSpacing) {
+                ForEach(0..<8, id: \.self) { index in
+                    ModrinthDetailSkeletonCardView(seed: index)
+                }
+            }
+        } else if hasLoaded && viewModel.results.isEmpty {
+            emptyResultView()
+                .frame(maxWidth: .infinity, alignment: .center)
+        } else {
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: gridSpacing) {
+                ForEach(viewModel.results, id: \.projectId) { mod in
+                    ModrinthDetailCardView(
+                        project: mod,
+                        selectedVersions: selectedVersions,
+                        selectedLoaders: selectedLoader,
+                        gameInfo: gameInfo,
+                        query: mod.projectType,
+                        type: true,
+                        selectedItem: $selectedItem,
+                        scannedDetailIds: $scannedDetailIds
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        openProject(mod)
+                    }
+                    .onAppear {
+                        loadNextPageIfNeeded(currentItem: mod)
+                    }
+                }
+            }
+        }
+    }
+
     private func initialLoadIfNeeded() async {
         if !hasLoaded {
             hasLoaded = true
@@ -203,13 +239,9 @@ struct ModrinthDetailView: View {
         }
     }
 
-    private func performSearchWithErrorHandling(
-        page: Int,
-        append: Bool
-    ) async {
+    private func performSearchWithErrorHandling(page: Int, append: Bool) async {
         do {
             try await performSearchThrowing(page: page, append: append)
-            // 搜索完成后预加载图片
             preloadImages()
         } catch {
             let globalError = GlobalError.from(error)
@@ -223,13 +255,11 @@ struct ModrinthDetailView: View {
 
     private func performSearchThrowing(page: Int, append: Bool) async throws {
         let params = buildSearchParamsKey(page: page)
-
         if params == lastSearchParams {
-            // 完全重复，不请求
             return
         }
 
-        guard !query.isEmpty else {
+        guard !projectTypes.isEmpty else {
             throw GlobalError.validation(
                 chineseMessage: "查询类型不能为空",
                 i18nKey: "error.validation.query_type_empty",
@@ -241,9 +271,10 @@ struct ModrinthDetailView: View {
         if !append {
             viewModel.beginNewSearch()
         }
+
         await viewModel.search(
             query: searchText,
-            projectType: query,
+            projectTypes: projectTypes,
             versions: selectedVersions,
             categories: selectedCategories,
             features: selectedFeatures,
@@ -256,57 +287,22 @@ struct ModrinthDetailView: View {
         )
     }
 
-    // MARK: - Result List
-    @ViewBuilder private var listContent: some View {
-        Group {
-            if let error = error {
-                newErrorView(error)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowSeparator(.hidden)
-            } else if viewModel.isLoading {
-                ForEach(0..<8, id: \.self) { index in
-                    ModrinthDetailSkeletonCardView(seed: index)
-                        .padding(.vertical, ResourceCardMetrics(style: generalSettings.resourceCardStyle).verticalPadding)
-                        .listRowInsets(
-                            EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
-                        )
-                        .listRowSeparator(.hidden)
-                }
-            } else if hasLoaded && viewModel.results.isEmpty {
-                emptyResultView()
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .listRowSeparator(.hidden)
-            } else {
-                ForEach(viewModel.results, id: \.projectId) { mod in
-                    ModrinthDetailCardView(
-                        project: mod,
-                        selectedVersions: selectedVersions,
-                        selectedLoaders: selectedLoader,
-                        gameInfo: gameInfo,
-                        query: query,
-                        type: true,
-                        selectedItem: $selectedItem,
-                        scannedDetailIds: $scannedDetailIds
-                    )
-                    .padding(.vertical, ResourceCardMetrics(style: generalSettings.resourceCardStyle).verticalPadding)
-                    .listRowInsets(
-                        EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
-                    )
-                    .listRowSeparator(.hidden)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.28)) {
-                            selectedProjectId = mod.projectId
-                            if let type = ResourceType(rawValue: query) {
-                                selectedItem = .resource(type)
-                            }
-                        }
-                    }
-                    .onAppear {
-                        loadNextPageIfNeeded(currentItem: mod)
-                    }
-                }
+    private func openProject(_ project: ModrinthProject) {
+        withAnimation(.easeInOut(duration: 0.28)) {
+            if generalSettings.serverInterfaceMode == .workspace,
+               NSEvent.modifierFlags.contains(.command) {
+                detailState.openResourceWorkspaceTab(
+                    resourceType,
+                    forceNew: true,
+                    selectedProjectId: project.projectId
+                )
+                selectedProjectSummary = project
+                return
             }
+
+            selectedProjectSummary = project
+            selectedProjectId = project.projectId
+            selectedItem = .resource(resourceType)
         }
     }
 
@@ -314,9 +310,10 @@ struct ModrinthDetailView: View {
         guard hasMoreResults, !viewModel.isLoading, !viewModel.isLoadingMore else {
             return
         }
-        guard
-            let index = viewModel.results.firstIndex(where: { $0.projectId == mod.projectId })
-        else { return }
+
+        guard let index = viewModel.results.firstIndex(where: { $0.projectId == mod.projectId }) else {
+            return
+        }
 
         let thresholdIndex = max(viewModel.results.count - 5, 0)
         if index >= thresholdIndex {
@@ -333,10 +330,9 @@ struct ModrinthDetailView: View {
         lastSearchParams = ""
     }
 
-    /// 后台预加载可见的资源图片（只预加载前20个）
     private func preloadImages() {
         let imageUrls = viewModel.results
-            .prefix(20)  // 只预加载前 20 个可见的
+            .prefix(20)
             .compactMap { $0.iconUrl }
             .compactMap(URL.init(string:))
 
@@ -347,7 +343,8 @@ struct ModrinthDetailView: View {
 
     private func buildSearchParamsKey(page: Int) -> String {
         [
-            query,
+            resourceType.rawValue,
+            projectTypesKey,
             selectedVersions.joined(separator: ","),
             selectedCategories.joined(separator: ","),
             selectedFeatures.joined(separator: ","),
@@ -361,13 +358,15 @@ struct ModrinthDetailView: View {
         ].joined(separator: "|")
     }
 
+    private var projectTypesKey: String {
+        projectTypes.sorted().joined(separator: ",")
+    }
+
     private var loadingMoreIndicator: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .controlSize(.small)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(16)
+        ProgressView()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
     }
 }
 
@@ -375,61 +374,59 @@ private struct ModrinthDetailSkeletonCardView: View {
     let seed: Int
     @EnvironmentObject private var generalSettings: GeneralSettingsManager
 
+    private var metrics: ResourceCardMetrics {
+        ResourceCardMetrics(style: generalSettings.resourceCardStyle)
+    }
+
     private var tagCount: Int { 2 + (seed % 2) }
     private var titleWidth: CGFloat {
-        SkeletonWidth.make(base: 176, variance: 34, seed: seed * 31 + 1)
+        SkeletonWidth.make(base: 156, variance: 34, seed: seed * 31 + 1)
     }
     private var subtitleWidth: CGFloat {
-        SkeletonWidth.make(base: 238, variance: 48, seed: seed * 31 + 2)
+        SkeletonWidth.make(base: 210, variance: 40, seed: seed * 31 + 2)
     }
 
     var body: some View {
-        let metrics = ResourceCardMetrics(style: generalSettings.resourceCardStyle)
-        HStack(spacing: metrics.contentSpacing) {
-            SkeletonView(
-                width: metrics.iconSize,
-                height: metrics.iconSize,
-                cornerRadius: metrics.cornerRadius
-            )
+        GroupBox {
+            VStack(
+                alignment: .leading,
+                spacing: generalSettings.resourceCardStyle == .compact ? 10 : 14
+            ) {
+                HStack(alignment: .top, spacing: metrics.contentSpacing) {
+                    SkeletonView(
+                        width: metrics.iconSize,
+                        height: metrics.iconSize,
+                        cornerRadius: metrics.cornerRadius
+                    )
 
-            VStack(alignment: .leading, spacing: metrics.spacing) {
-                SkeletonView(width: titleWidth, height: 16, cornerRadius: 4)
-                SkeletonView(width: subtitleWidth, height: 13, cornerRadius: 4)
-                HStack(spacing: metrics.spacing) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        SkeletonView(width: titleWidth, height: 18, cornerRadius: 6)
+                        SkeletonView(width: subtitleWidth, height: 13, cornerRadius: 5)
+                        if generalSettings.resourceCardStyle == .card {
+                            SkeletonView(width: 180, height: 13, cornerRadius: 5)
+                        }
+                    }
+                }
+
+                HStack(spacing: 8) {
                     ForEach(0..<tagCount, id: \.self) { index in
                         SkeletonView(
                             width: SkeletonWidth.make(
-                                base: 44,
-                                variance: 10,
-                                seed: seed * 31 + 10 + index
+                                base: 52,
+                                variance: 12,
+                                seed: seed * 31 + 20 + index
                             ),
-                            height: 14,
-                            cornerRadius: metrics.tagCornerRadius
+                            height: 18,
+                            cornerRadius: 9
                         )
                     }
                 }
-            }
 
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: metrics.spacing) {
-                SkeletonView(
-                    width: SkeletonWidth.make(base: 56, variance: 12, seed: seed * 31 + 20),
-                    height: 12,
-                    cornerRadius: 4
-                )
-                SkeletonView(
-                    width: SkeletonWidth.make(base: 48, variance: 10, seed: seed * 31 + 21),
-                    height: 12,
-                    cornerRadius: 4
-                )
-                SkeletonView(
-                    width: SkeletonWidth.make(base: 84, variance: 16, seed: seed * 31 + 22),
-                    height: 22,
-                    cornerRadius: 8
-                )
+                HStack {
+                    Spacer(minLength: 0)
+                    SkeletonView(width: 96, height: 30, cornerRadius: 15)
+                }
             }
         }
-        .frame(maxWidth: .infinity)
     }
 }

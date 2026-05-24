@@ -9,17 +9,20 @@ struct ServerPlayersView: View {
     @State private var bannedPlayers: [ServerPlayerListService.PlayerEntry] = []
     @State private var bannedIps: [ServerPlayerListService.PlayerEntry] = []
 
-    @State private var newName: String = ""
-    @State private var selectedList: String = "whitelist"
-    @State private var expandedSections: Set<String> = []
-    private let collapsedPreviewCount = 4
+    @State private var newNames: String = ""
+    @State private var selectedList: String?
+    @State private var selectedPlayerId: String?
+    @State private var showsAddSheet = false
+    @State private var isSavingPlayerLists = false
+    @StateObject private var toolbarSelection = ServerDetailToolbarSelectionState.shared
     private let autoRefreshTimer = Timer.publish(every: 6, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ServerDetailPage(
             title: "server.players.title".localized()
         ) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
+                Group {
                     if serverStatusManager.isServerRunning(serverId: server.id) {
                         Text("server.players.running_hint".localized())
                             .foregroundColor(.secondary)
@@ -27,176 +30,105 @@ struct ServerPlayersView: View {
                         Text("server.players.stopped_hint".localized())
                             .foregroundColor(.secondary)
                     }
+                }
+                .font(.callout)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "person.badge.plus")
-                                .foregroundStyle(.secondary)
-                            Text("server.players.quick_add.title".localized())
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                            Spacer()
-                        }
-
-                        HStack(spacing: 8) {
-                            TextField(
-                                selectedList == "bannedIps"
-                                    ? "server.players.placeholder.banned_ips".localized()
-                                    : "server.players.name_placeholder".localized(),
-                                text: $newName
-                            )
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { addEntry() }
-
-                            Menu {
-                                Button("server.players.list.whitelist".localized()) { selectedList = "whitelist" }
-                                Button("server.players.list.ops".localized()) { selectedList = "ops" }
-                                Button("server.players.list.banned_players".localized()) { selectedList = "bannedPlayers" }
-                                Button("server.players.list.banned_ips".localized()) { selectedList = "bannedIps" }
-                            } label: {
-                                Label(selectedListTitle, systemImage: selectedListIcon)
-                                    .frame(minWidth: 150, alignment: .leading)
-                            }
-
-                            Button {
-                                addEntry()
-                            } label: {
-                                Label("common.add".localized(), systemImage: "plus")
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.gray.opacity(0.08))
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if selectedList == "bannedIps" {
-                        Text("server.players.banned_ip_hint".localized())
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
-                            playerList(sectionKey: "whitelist", title: "server.players.list.whitelist".localized(), entries: whitelist) { removeEntry(from: "whitelist", entry: $0) }
-                            playerList(sectionKey: "ops", title: "server.players.list.ops".localized(), entries: ops) { removeEntry(from: "ops", entry: $0) }
-                            playerList(sectionKey: "bannedPlayers", title: "server.players.list.banned_players".localized(), entries: bannedPlayers) { removeEntry(from: "bannedPlayers", entry: $0) }
-                            playerList(sectionKey: "bannedIps", title: "server.players.list.banned_ips".localized(), entries: bannedIps) { removeEntry(from: "bannedIps", entry: $0) }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 2)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                groupSelector
+                playerEntriesList
             }
         }
-        .onAppear { loadAll() }
+        .onAppear {
+            if selectedList == nil {
+                selectedList = "whitelist"
+            }
+            loadAll()
+        }
         .onReceive(autoRefreshTimer) { _ in
             loadAll()
         }
+        .onChange(of: selectedList) { _, newValue in
+            toolbarSelection.selectedPlayerGroupByServerId[server.id] = newValue
+            selectedPlayerId = nil
+            toolbarSelection.selectedPlayerIdByServerId[server.id] = nil
+        }
+        .onChange(of: selectedPlayerId) { _, newValue in
+            toolbarSelection.selectedPlayerIdByServerId[server.id] = newValue
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .serverDetailToolbarAction)) { notification in
+            guard let action = ServerDetailToolbarActionBus.action(from: notification) else { return }
+            if action == .playersRemove {
+                removeSelectedEntry()
+                return
+            }
+            guard action == .playersAdd else { return }
+            newNames = ""
+            showsAddSheet = selectedList != nil
+        }
+        .sheet(isPresented: $showsAddSheet) {
+            playerAddSheet
+        }
+        .onDisappear {
+            toolbarSelection.selectedPlayerGroupByServerId[server.id] = nil
+            toolbarSelection.selectedPlayerIdByServerId[server.id] = nil
+        }
     }
 
-    private func playerList(
-        sectionKey: String,
-        title: String,
-        entries: [ServerPlayerListService.PlayerEntry],
-        onRemove: @escaping (ServerPlayerListService.PlayerEntry) -> Void
-    ) -> some View {
-        let isExpanded = expandedSections.contains(sectionKey)
-        let shouldCollapse = entries.count > collapsedPreviewCount
-        let shownEntries = shouldCollapse && !isExpanded ? Array(entries.prefix(collapsedPreviewCount)) : entries
+    private var groupSelector: some View {
+        Picker("", selection: selectedListBinding) {
+            Text("server.players.list.whitelist".localized()).tag("whitelist")
+            Text("server.players.list.ops".localized()).tag("ops")
+            Text("server.players.list.banned_players".localized()).tag("bannedPlayers")
+            Text("server.players.list.banned_ips".localized()).tag("bannedIps")
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+    }
 
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-            if entries.isEmpty {
+    private var playerEntriesList: some View {
+        List(selection: $selectedPlayerId) {
+            if selectedList == nil {
                 Text("common.empty".localized())
                     .foregroundColor(.secondary)
-                    .padding(.vertical, 6)
             } else {
-                ForEach(shownEntries, id: \.self) { entry in
-                    HStack {
-                        Text(entry.name)
-                        Spacer()
-                        Button("common.remove".localized()) { onRemove(entry) }
-                    }
-                    if entry != shownEntries.last {
-                        Divider()
-                    }
-                }
-                if shouldCollapse {
-                    Divider()
-                    Button {
-                        toggleExpand(sectionKey: sectionKey)
-                    } label: {
-                        HStack(spacing: 6) {
-                            Text(
-                                isExpanded
-                                    ? "server.players.collapse".localized()
-                                    : String(format: "server.players.more_count".localized(), entries.count - collapsedPreviewCount)
-                            )
-                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
+                ForEach(currentEntries, id: \.self) { entry in
+                    Text(entry.name)
+                        .padding(.vertical, 2)
+                        .tag(playerEntryId(entry))
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.gray.opacity(0.08))
+        .listStyle(.inset(alternatesRowBackgrounds: true))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var selectedListBinding: Binding<String> {
+        Binding(
+            get: { selectedList ?? "whitelist" },
+            set: { selectedList = $0 }
         )
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func toggleExpand(sectionKey: String) {
-        if expandedSections.contains(sectionKey) {
-            expandedSections.remove(sectionKey)
-        } else {
-            expandedSections.insert(sectionKey)
-        }
-    }
-
-    private var selectedListTitle: String {
+    private var currentEntries: [ServerPlayerListService.PlayerEntry] {
         switch selectedList {
         case "whitelist":
-            return "server.players.list.whitelist".localized()
+            whitelist
         case "ops":
-            return "server.players.list.ops".localized()
+            ops
         case "bannedPlayers":
-            return "server.players.list.banned_players".localized()
+            bannedPlayers
         case "bannedIps":
-            return "server.players.list.banned_ips".localized()
+            bannedIps
         default:
-            return "server.players.list.whitelist".localized()
+            []
         }
     }
 
-    private var selectedListIcon: String {
-        switch selectedList {
-        case "whitelist":
-            return "checkmark.shield"
-        case "ops":
-            return "person.crop.circle.badge.checkmark"
-        case "bannedPlayers":
-            return "person.crop.circle.badge.xmark"
-        case "bannedIps":
-            return "network.slash"
-        default:
-            return "checkmark.shield"
-        }
+    private func playerEntryId(_ entry: ServerPlayerListService.PlayerEntry) -> String {
+        [selectedList ?? "", entry.uuid, entry.name, entry.ip ?? ""].joined(separator: "|")
     }
 
     private func loadAll() {
+        guard !isSavingPlayerLists else { return }
         if isRemoteServer {
             loadRemoteLists()
             return
@@ -232,6 +164,7 @@ struct ServerPlayersView: View {
             return
         }
         if serverStatusManager.isServerRunning(serverId: server.id) { return }
+        isSavingPlayerLists = true
         let currentWhitelist = whitelist
         let currentOps = ops
         let currentBannedPlayers = bannedPlayers
@@ -245,12 +178,66 @@ struct ServerPlayersView: View {
             } catch {
                 GlobalErrorHandler.shared.handle(error)
             }
+            await MainActor.run {
+                isSavingPlayerLists = false
+            }
         }
     }
 
-    private func addEntry() {
-        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var playerAddSheet: some View {
+        CommonSheetView {
+            Text("server.players.add.title".localized())
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } body: {
+            VStack(alignment: .leading, spacing: 10) {
+                TextField(
+                    selectedList == "bannedIps"
+                        ? "server.players.placeholder.banned_ips".localized()
+                        : "server.players.name_placeholder".localized(),
+                    text: $newNames
+                )
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { addEntries() }
+
+                Text("server.players.add.batch_hint".localized())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 420)
+        } footer: {
+            HStack {
+                Spacer()
+                Button("common.cancel".localized()) {
+                    showsAddSheet = false
+                }
+                Button("common.add".localized()) {
+                    addEntries()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(playerNamesToAdd.isEmpty)
+            }
+        }
+    }
+
+    private var playerNamesToAdd: [String] {
+        newNames
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func addEntries() {
+        let names = playerNamesToAdd
+        guard !names.isEmpty else { return }
+        names.forEach(addEntry)
+        newNames = ""
+        showsAddSheet = false
+    }
+
+    private func addEntry(name: String) {
         guard !name.isEmpty else { return }
+        guard let selectedList else { return }
         let entry = ServerPlayerListService.PlayerEntry(uuid: "", name: name, level: nil, bypassesPlayerLimit: false, created: nil, source: nil, expires: nil, reason: nil, ip: nil)
         let isRunning = serverStatusManager.isServerRunning(serverId: server.id)
 
@@ -273,7 +260,6 @@ struct ServerPlayersView: View {
         default:
             break
         }
-        newName = ""
         if !isRunning { saveAll() }
     }
 
@@ -296,6 +282,13 @@ struct ServerPlayersView: View {
             break
         }
         if !isRunning { saveAll() }
+    }
+
+    private func removeSelectedEntry() {
+        guard let selectedList, let selectedPlayerId else { return }
+        guard let entry = currentEntries.first(where: { playerEntryId($0) == selectedPlayerId }) else { return }
+        removeEntry(from: selectedList, entry: entry)
+        self.selectedPlayerId = nil
     }
 
     private var isRemoteServer: Bool {
@@ -371,6 +364,7 @@ struct ServerPlayersView: View {
     private func saveRemoteLists() {
         guard let node = serverNodeRepository.getNode(by: server.nodeId) else { return }
         if serverStatusManager.isServerRunning(serverId: server.id) { return }
+        isSavingPlayerLists = true
         Task {
             do {
                 try await SSHNodeService.writeRemoteConfigFile(
@@ -399,6 +393,9 @@ struct ServerPlayersView: View {
                 )
             } catch {
                 await MainActor.run { GlobalErrorHandler.shared.handle(error) }
+            }
+            await MainActor.run {
+                isSavingPlayerLists = false
             }
         }
     }

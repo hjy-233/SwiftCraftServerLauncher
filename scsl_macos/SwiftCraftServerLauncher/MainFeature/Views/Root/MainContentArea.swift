@@ -21,34 +21,19 @@ struct MainContentArea: View {
     @EnvironmentObject private var commandPalette: CommandPaletteController
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 168, ideal: 168, max: 168)
-        } content: {
-            if interfaceLayoutStyle == .classic {
-                middleColumnContentView
-            } else {
-                middleColumnDetailView
-            }
-        } detail: {
-            if interfaceLayoutStyle == .classic {
-                middleColumnDetailView
-            } else {
-                middleColumnContentView
-            }
-        }
+        navigationSplitContent
         .environmentObject(filterState)
         .environmentObject(detailState)
         .onChange(of: detailState.selectedItem) { oldValue, newValue in
             handleSidebarItemChange(from: oldValue, to: newValue)
         }
         .onChange(of: serverRepository.workingPathChanged) { _, _ in
-            detailState.selectedItem = .resource(.mod)
+            detailState.selectedItem = .resource(.browse)
             detailState.serverId = nil
         }
         .onAppear {
             if case .game = detailState.selectedItem {
-                detailState.selectedItem = .resource(.mod)
+                detailState.selectedItem = .resource(.browse)
             }
         }
         .onAppear {
@@ -76,6 +61,27 @@ struct MainContentArea: View {
         }
     }
 
+    private var navigationSplitContent: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            SidebarView()
+                .navigationSplitViewColumnWidth(min: 168, ideal: 168, max: 168)
+        } content: {
+            if showsFocusedResourceWorkspaceShell {
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .navigationSplitViewColumnWidth(min: 1, ideal: 1, max: 1)
+            } else {
+                middleColumnContentView
+            }
+        } detail: {
+            if showsFocusedResourceWorkspaceShell {
+                focusedResourceWorkspaceShell
+            } else {
+                middleColumnDetailView
+            }
+        }
+    }
+
     @ViewBuilder private var middleColumnDetailView: some View {
         DetailView()
             .toolbar {
@@ -88,10 +94,68 @@ struct MainContentArea: View {
             }
     }
 
+    @ViewBuilder private var middleColumnDetailViewWithoutWorkspaceHeader: some View {
+        DetailView(showsUnifiedWorkspaceHeader: false)
+    }
+
     @ViewBuilder private var middleColumnContentView: some View {
         ContentView()
             .toolbar { ContentToolbarView() }
-            .navigationSplitViewColumnWidth(min: 235, ideal: 235, max: 280)
+            .navigationSplitViewColumnWidth(
+                min: contentColumnWidth.min,
+                ideal: contentColumnWidth.ideal,
+                max: contentColumnWidth.max
+            )
+    }
+
+    @ViewBuilder private var middleColumnContentBodyView: some View {
+        ContentView()
+            .frame(
+                minWidth: contentColumnWidth.min,
+                idealWidth: contentColumnWidth.ideal,
+                maxWidth: contentColumnWidth.max
+            )
+    }
+
+    private var focusedResourceWorkspaceShell: some View {
+        VStack(spacing: 0) {
+            UnifiedWorkspaceNavigationBar()
+            Divider()
+
+            HSplitView {
+                middleColumnContentBodyView
+                middleColumnDetailViewWithoutWorkspaceHeader
+            }
+        }
+        .toolbar {
+            ContentToolbarView()
+            DetailToolbarView(
+                filterState: filterState,
+                detailState: detailState,
+                serverRepository: serverRepository,
+                serverLaunchUseCase: serverLaunchUseCase
+            )
+        }
+    }
+
+    private var contentColumnWidth: (min: CGFloat, ideal: CGFloat, max: CGFloat) {
+        if case .server = detailState.selectedItem {
+            return (1, 1, 1)
+        }
+        if detailState.selectedProjectId != nil {
+            return (1, 1, 1)
+        }
+        return (235, 235, 280)
+    }
+
+    private var showsFocusedResourceWorkspaceShell: Bool {
+        guard interfaceLayoutStyle == .focused,
+              generalSettings.serverInterfaceMode == .workspace,
+              detailState.selectedProjectId == nil,
+              case .resource(let type) = detailState.selectedItem else {
+            return false
+        }
+        return type == .browse || type == .bookmarks
     }
 
     // MARK: - Sidebar Item Change Handlers
@@ -194,7 +258,7 @@ struct MainContentArea: View {
         filterState.sortIndex = AppConstants.modrinthIndex
 
         if case .resource(let resourceType) = detailState.selectedItem {
-            detailState.gameResourcesType = resourceType.rawValue
+            detailState.gameResourcesType = resolvedProjectType(for: resourceType)
         }
         filterState.clearFiltersAndPagination()
 
@@ -220,11 +284,21 @@ struct MainContentArea: View {
         type: ResourceType,
         applySearch: Bool
     ) {
-        detailState.selectedItem = .resource(type)
-        detailState.gameResourcesType = type.rawValue
+        filterState.resourceBrowseScope = ResourceBrowseScope(resourceType: type)
+        detailState.selectedItem = .resource(.browse)
+        detailState.gameResourcesType = filterState.resourceBrowseScope.primaryProjectType
         resetToResourceDefaults()
         if applySearch {
             filterState.searchText = commandPalette.query
+        }
+    }
+
+    private func resolvedProjectType(for resourceType: ResourceType) -> String {
+        switch resourceType {
+        case .browse, .bookmarks:
+            return filterState.resourceBrowseScope.primaryProjectType
+        default:
+            return resourceType.rawValue
         }
     }
 

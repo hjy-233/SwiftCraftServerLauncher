@@ -35,7 +35,9 @@ public enum SidebarItem: Hashable, Identifiable {
 }
 
 /// 资源类型
-public enum ResourceType: String, CaseIterable {
+public enum ResourceType: String, CaseIterable, Codable {
+    case browse = "browse"
+    case bookmarks = "bookmarks"
     case mod = "mod"
     case plugin = "plugin"
     case datapack = "datapack"
@@ -44,12 +46,23 @@ public enum ResourceType: String, CaseIterable {
     case modpack = "modpack"
 
     public var localizedName: String {
-        return "resource.content.type.\(rawValue)".localized()
+        switch self {
+        case .browse:
+            return "common.browse".localized()
+        case .bookmarks:
+            return "common.bookmark".localized()
+        default:
+            return "resource.content.type.\(rawValue)".localized()
+        }
     }
 
     /// 资源类型的 SF Symbol 图标名称
     public var systemImage: String {
         switch self {
+        case .browse:
+            return "square.grid.2x2"
+        case .bookmarks:
+            return "bookmark"
         case .mod:
             return "puzzlepiece.extension"
         case .plugin:

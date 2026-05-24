@@ -3,6 +3,55 @@ import SwiftUI
 import os
 
 struct AddOrDeleteResourceButton: View {
+    private struct ResourceActionButtonChrome: ViewModifier {
+        @Environment(\.colorScheme)
+        private var colorScheme
+
+        let usesAppStoreStyle: Bool
+        let usesSubtleAppStoreStyle: Bool
+
+        func body(content: Content) -> some View {
+            Group {
+                if usesAppStoreStyle {
+                    content
+                        .buttonStyle(.plain)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(foregroundColor)
+                        .frame(width: 67, height: 23)
+                        .background {
+                            RoundedRectangle(cornerRadius: 80, style: .continuous)
+                                .fill(backgroundColor)
+                        }
+                        .contentShape(
+                            RoundedRectangle(cornerRadius: 80, style: .continuous)
+                        )
+                        .controlSize(.small)
+                } else {
+                    content
+                        .buttonStyle(.borderedProminent)
+                        .tint(.accentColor)
+                        .font(.caption2)
+                        .controlSize(.small)
+                }
+            }
+        }
+
+        private var backgroundColor: Color {
+            if usesSubtleAppStoreStyle {
+                return colorScheme == .dark
+                    ? Color.accentColor.opacity(0.18)
+                    : Color(nsColor: .controlBackgroundColor)
+            }
+            return colorScheme == .dark
+                ? .white
+                : Color(nsColor: .controlBackgroundColor)
+        }
+
+        private var foregroundColor: Color {
+            .accentColor
+        }
+    }
+
     var project: ModrinthProject
     let selectedVersions: [String]
     let selectedLoaders: [String]
@@ -36,6 +85,8 @@ struct AddOrDeleteResourceButton: View {
     var onToggleDisableState: ((Bool) -> Void)?
     /// 更新成功回调：仅更新当前条目的 hash 与列表项，不全局扫描。参数 (projectId, oldFileName, newFileName, newHash)
     var onResourceUpdated: ((String, String, String, String?) -> Void)?
+    let usesAppStoreStyle: Bool
+    let usesSubtleAppStoreStyle: Bool
     // 保证所有 init 都有 onResourceChanged 参数（带默认值）
     init(
         project: ModrinthProject,
@@ -49,7 +100,9 @@ struct AddOrDeleteResourceButton: View {
         scannedDetailIds: Binding<Set<String>> = .constant([]),
         isResourceDisabled: Binding<Bool> = .constant(false),
         onResourceUpdated: ((String, String, String, String?) -> Void)? = nil,
-        onToggleDisableState: ((Bool) -> Void)? = nil
+        onToggleDisableState: ((Bool) -> Void)? = nil,
+        usesAppStoreStyle: Bool = false,
+        usesSubtleAppStoreStyle: Bool = false
     ) {
         self.project = project
         self.selectedVersions = selectedVersions
@@ -63,6 +116,8 @@ struct AddOrDeleteResourceButton: View {
         self._isResourceDisabled = isResourceDisabled
         self.onResourceUpdated = onResourceUpdated
         self.onToggleDisableState = onToggleDisableState
+        self.usesAppStoreStyle = usesAppStoreStyle
+        self.usesSubtleAppStoreStyle = usesSubtleAppStoreStyle
     }
 
     var body: some View {
@@ -78,10 +133,10 @@ struct AddOrDeleteResourceButton: View {
                         Text("resource.update".localized())
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.accentColor)
-                .font(.caption2)
-                .controlSize(.small)
+                .modifier(ResourceActionButtonChrome(
+                    usesAppStoreStyle: usesAppStoreStyle,
+                    usesSubtleAppStoreStyle: usesSubtleAppStoreStyle
+                ))
                 .disabled(addButtonState == .loading || isUpdateButtonLoading)
             }
 
@@ -100,10 +155,10 @@ struct AddOrDeleteResourceButton: View {
             Button(action: handleButtonAction) {
                 buttonLabel
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.accentColor)  // 或 .tint(.primary) 但一般用 accentColor 更美观
-            .font(.caption2)
-            .controlSize(.small)
+            .modifier(ResourceActionButtonChrome(
+                usesAppStoreStyle: usesAppStoreStyle,
+                usesSubtleAppStoreStyle: usesSubtleAppStoreStyle
+            ))
             .disabled(
                 addButtonState == .loading
                     || (addButtonState == .installed && type)

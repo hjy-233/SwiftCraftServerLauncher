@@ -125,13 +125,28 @@ public struct SidebarView: View {
 
                 // 资源部分
                 Section(header: Text("sidebar.resources.title".localized())) {
-                    ForEach([ResourceType.mod, ResourceType.plugin], id: \.self) { type in
-                        NavigationLink(value: SidebarItem.resource(type)) {
-                            HStack(spacing: 6) {
-                                Label(type.localizedName, systemImage: type.systemImage)
-                            }
-                        }
-                        .tag(SidebarItem.resource(type))
+                    HStack(spacing: 6) {
+                        Label(
+                            ResourceType.browse.localizedName,
+                            systemImage: ResourceType.browse.systemImage
+                        )
+                    }
+                    .tag(SidebarItem.resource(.browse))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        handleResourceTap(type: .browse)
+                    }
+
+                    HStack(spacing: 6) {
+                        Label(
+                            ResourceType.bookmarks.localizedName,
+                            systemImage: ResourceType.bookmarks.systemImage
+                        )
+                    }
+                    .tag(SidebarItem.resource(.bookmarks))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        handleResourceTap(type: .bookmarks)
                     }
                 }
 
@@ -337,6 +352,17 @@ public struct SidebarView: View {
     private func handleServerTap(serverId: String) {
         let item = SidebarItem.server(serverId)
         let modifiers = NSEvent.modifierFlags
+        if generalSettings.serverInterfaceMode == .workspace,
+           modifiers.contains(.command) {
+            selectedSidebarItems = [item]
+            previousSidebarSelection = selectedSidebarItems
+            detailState.openServerWorkspaceTab(
+                serverId: serverId,
+                section: detailState.serverPanelSection,
+                forceNew: true
+            )
+            return
+        }
         if modifiers.contains(.command) {
             if selectedSidebarItems.contains(item) {
                 selectedSidebarItems.remove(item)
@@ -357,6 +383,24 @@ public struct SidebarView: View {
             previousSidebarSelection = selectedSidebarItems
             return
         }
+        selectedSidebarItems = [item]
+        previousSidebarSelection = selectedSidebarItems
+        detailState.selectedItem = item
+    }
+
+    private func handleResourceTap(type: ResourceType) {
+        let item = SidebarItem.resource(type)
+        let modifiers = NSEvent.modifierFlags
+
+        if generalSettings.serverInterfaceMode == .workspace,
+           modifiers.contains(.command),
+           type == .browse || type == .bookmarks {
+            selectedSidebarItems = [item]
+            previousSidebarSelection = selectedSidebarItems
+            detailState.openResourceWorkspaceTab(type, forceNew: true)
+            return
+        }
+
         selectedSidebarItems = [item]
         previousSidebarSelection = selectedSidebarItems
         detailState.selectedItem = item
