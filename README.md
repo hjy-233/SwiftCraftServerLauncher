@@ -1,3 +1,5 @@
+已归档
+
 <div align="center">
   <img src="SwiftCraftServerLauncher/Assets.xcassets/AppIcon.appiconset/mac512pt2x.png" alt="SwiftCraftServerLauncher icon" width="128" height="128">
 
